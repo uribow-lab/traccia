@@ -1,8 +1,11 @@
 # 文字起こし マニュアル
 
-> このドキュメントは **Traccia** の文字起こし側（`transcribe`）の詳細マニュアルです。
-> ツール全体の説明と字幕エディタの使い方は [`README.md`](../README.md) にあります。
-> API キーの取得手順は [`api-keys.md`](api-keys.md) にあります。
+> **Traccia の本体は[字幕エディタ](editor.md)です。** このドキュメントは、そこへ渡す `.srt` を
+> **無料で用意する**ための `transcribe` コマンドの詳細マニュアルです。
+> 手軽に済ませたいなら、エディタの画面から [Gemini で書き起こす](gemini.md)道もあります（有料）。
+>
+> ツール全体の説明は [`README.md`](../README.md)、API キーの取得手順は
+> [`api-keys.md`](api-keys.md) にあります。
 >
 > 本文中の `python transcribe.py ...` は現在も動きます。
 > 新しい書き方は `python -m traccia transcribe ...` で、どちらでも同じです。
