@@ -1,0 +1,778 @@
+/* ============================================================
+   話者別字幕エディタ — 案A（3ペイン）
+   ============================================================ */
+:root{
+  --font-ui:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Roboto Mono",monospace;
+
+  --bg:#0C1215;
+  --panel:#141D21;
+  --rail:#18242A;
+  --line:#28373D;
+  --line-soft:#1F2C32;
+  --ink:#DDE6E8;
+  --muted:#7A8D95;
+  --dim:#54666E;
+  --accent:#2FBFA8;
+  --accent-ink:#062421;
+  --warn:#E0A93F;
+  --bad:#E4685D;
+  --guide:#FFE066;   /* スナップガイドの縦線 */
+
+  --spk-0:#E4685D;
+  --spk-1:#5B6EE1;
+  --spk-2:#E0A93F;
+  --spk-3:#A97BD4;
+  --spk-4:#4FB477;
+  --spk-5:#D96BA8;
+  --spk-6:#5FB3C9;
+  --spk-7:#B79A5E;
+  --spk-x:#6E8189;
+
+  --h-ruler:22px;
+  --h-video:26px;
+  --h-wave:44px;
+  --h-lane:34px;
+  --gutter:78px;
+
+  --right-w:430px;
+  --preview-h:44%;
+}
+
+*{box-sizing:border-box;}
+
+html,body{height:100%;}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:var(--font-ui);font-size:13px;line-height:1.6;
+  overflow:hidden;-webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;
+}
+button{font-family:inherit;}
+::selection{background:rgba(47,191,168,.3);}
+
+/* ---------- 共通パーツ ---------- */
+.panel-label{
+  font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--dim);font-weight:700;flex:none;
+}
+.hint{font-size:11px;color:var(--dim);}
+.spacer,.grow{flex:1;min-width:0;}
+.tc{font-family:var(--font-mono);font-size:12px;font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.tc.dim{color:var(--dim);}
+
+.btn{
+  font-size:11.5px;background:#1E2C32;border:1px solid var(--line);color:var(--ink);
+  padding:4px 11px;border-radius:4px;cursor:pointer;line-height:1.5;white-space:nowrap;
+}
+.btn:hover:not(:disabled){border-color:var(--accent);}
+.btn:disabled{opacity:.38;cursor:default;}
+.btn:focus-visible,.tbtn:focus-visible,.sel:focus-visible,.inp:focus-visible,.micro:focus-visible{
+  outline:2px solid var(--accent);outline-offset:1px;
+}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700;}
+.btn.pri:hover{filter:brightness(1.1);}
+.btn.ghost{background:transparent;}
+.btn.sm{padding:2px 8px;font-size:11px;}
+.btn.dirty{border-color:var(--warn);color:var(--warn);}
+
+.micro{
+  font-size:9.5px;background:#22323A;border:1px solid var(--line);color:var(--muted);
+  padding:1px 5px;border-radius:3px;cursor:pointer;line-height:1.5;
+}
+.micro:hover{border-color:var(--accent);color:var(--ink);}
+
+.sel,.inp{
+  font-family:inherit;font-size:11.5px;background:#111B1F;
+  border:1px solid var(--line);color:var(--ink);
+  padding:3px 7px;border-radius:4px;
+}
+.inp{min-width:0;}
+.field{display:flex;align-items:center;gap:6px;}
+.field .lb{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700;}
+.check{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;}
+.check input{accent-color:var(--accent);margin:0;}
+
+/* ---------- トップバー ---------- */
+.topbar{
+  display:flex;align-items:center;gap:12px;
+  height:42px;padding:0 12px;flex:none;
+  background:var(--rail);border-bottom:1px solid var(--line);
+}
+.brand{
+  font-weight:600;font-size:14px;letter-spacing:.09em;flex:none;
+  color:var(--accent);cursor:default;
+}
+.topbar .meta{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38ch;
+}
+#statusMsg{transition:color .2s;}
+#statusMsg.ok{color:var(--accent);}
+#statusMsg.err{color:var(--bad);}
+
+/* ---------- シェル ---------- */
+.shell{flex:1;display:flex;min-height:0;}
+.col-left{flex:1;min-width:0;display:flex;flex-direction:column;}
+.col-right{width:var(--right-w);flex:none;display:flex;flex-direction:column;min-width:0;background:var(--panel);}
+
+/* 掴みやすいように当たり判定を広く取り、中央に線を描く */
+.vsplit,.hsplit{
+  flex:none;background:transparent;position:relative;z-index:5;
+}
+.vsplit{width:9px;cursor:col-resize;margin:0 -2px;}
+.hsplit{height:9px;cursor:row-resize;margin:-2px 0;}
+.vsplit::before,.hsplit::before{
+  content:"";position:absolute;background:var(--line);
+}
+.vsplit::before{top:0;bottom:0;left:3px;width:3px;}
+.hsplit::before{left:0;right:0;top:3px;height:3px;}
+.vsplit::after,.hsplit::after{
+  content:"";position:absolute;background:var(--dim);border-radius:2px;
+}
+.vsplit::after{top:50%;left:4px;width:1px;height:26px;margin-top:-13px;}
+.hsplit::after{left:50%;top:4px;height:1px;width:26px;margin-left:-13px;}
+.vsplit:hover::before,.vsplit.on::before,
+.hsplit:hover::before,.hsplit.on::before{background:var(--accent);}
+.vsplit:hover::after,.vsplit.on::after,
+.hsplit:hover::after,.hsplit.on::after{background:var(--accent-ink);}
+
+/* ---------- プレビュー ---------- */
+.pane-preview{height:var(--preview-h);flex:none;display:flex;flex-direction:column;min-height:170px;}
+
+/* 動画の大きさは JS が px で入れる（アスペクト比を必ず保つため）。
+   margin:auto は「収まるときは中央、はみ出すときは端が切れない」を両立する。
+   justify-content:center だとはみ出したとき左端がスクロールで届かなくなる。 */
+.stage{
+  flex:1;min-height:0;background:#05090B;position:relative;
+  display:flex;overflow:auto;
+  scrollbar-width:thin;
+}
+.stage video{display:block;margin:auto;flex:none;background:#000;}
+.stage.pannable{cursor:grab;}
+.stage.pannable:active,
+.stage.panning{cursor:grabbing;}
+.stage::-webkit-scrollbar{width:9px;height:9px;}
+.stage::-webkit-scrollbar-thumb{background:#2A3A41;border-radius:5px;}
+.stage::-webkit-scrollbar-track{background:transparent;}
+#zoomInfo{font-family:var(--font-mono);font-size:10px;white-space:nowrap;}
+.stage-empty{
+  position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--dim);font-size:12px;pointer-events:none;
+}
+.stage-empty[hidden]{display:none;}
+
+.telop-bar{
+  flex:none;min-height:44px;padding:7px 12px;
+  background:#0A1114;border-top:1px solid var(--line-soft);
+  display:flex;flex-direction:column;gap:4px;justify-content:center;
+}
+.telop-none{color:var(--dim);font-size:11.5px;}
+.telop-line{display:flex;align-items:flex-start;gap:8px;font-size:14px;line-height:1.5;}
+.telop-line .who{
+  flex:none;font-family:var(--font-mono);font-size:9.5px;font-weight:700;
+  color:#0A1113;padding:2px 6px;border-radius:3px;letter-spacing:.06em;margin-top:2px;
+}
+/* 実際に画面へ出るときの見え方に合わせて、改行はそのまま折り返す */
+.telop-line .body{font-weight:600;color:#fff;white-space:pre-wrap;}
+
+.transport{flex:none;background:var(--panel);border-top:1px solid var(--line-soft);padding:6px 10px 8px;}
+.scrub{
+  -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+  background:#22323A;outline:none;cursor:pointer;margin:0 0 7px;display:block;
+}
+.scrub::-webkit-slider-thumb{
+  -webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--bg);cursor:grab;
+}
+.scrub::-moz-range-thumb{
+  width:13px;height:13px;border-radius:50%;border:2px solid var(--bg);
+  background:var(--accent);cursor:grab;
+}
+.transport-row{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+.tbtn{
+  min-width:30px;height:26px;padding:0 6px;display:grid;place-items:center;
+  background:transparent;border:1px solid transparent;border-radius:4px;
+  color:var(--ink);cursor:pointer;font-size:11px;font-family:var(--font-mono);
+}
+.tbtn:hover{background:#1E2C32;border-color:var(--line);}
+.tbtn.play{background:var(--accent);color:var(--accent-ink);min-width:36px;font-size:12px;}
+.transport-row .tc{margin-left:8px;}
+
+/* ---------- タイムライン ---------- */
+.pane-timeline{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg);}
+.tl-toolbar{
+  flex:none;display:flex;align-items:center;gap:10px;
+  padding:6px 10px;border-bottom:1px solid var(--line-soft);background:var(--panel);
+}
+.tl-body{flex:1;min-height:0;display:flex;overflow-y:auto;overflow-x:hidden;}
+.tl-gutter{width:var(--gutter);flex:none;background:var(--panel);border-right:1px solid var(--line);}
+.gut-cell{
+  height:var(--h-video);display:flex;align-items:center;gap:5px;padding:0 8px;
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);
+  border-bottom:1px solid var(--line-soft);letter-spacing:.03em;
+}
+.gut-ruler{height:var(--h-ruler);border-bottom:1px solid var(--line-soft);}
+.gut-cell[data-track="wave"]{height:var(--h-wave);}
+.gut-lane{
+  height:var(--h-lane);display:flex;align-items:center;gap:6px;padding:0 8px;
+  border-bottom:1px solid var(--line-soft);cursor:pointer;
+  font-family:var(--font-mono);font-size:10.5px;color:var(--muted);
+}
+.gut-lane:hover{background:#18242A;}
+.gut-lane i{width:6px;height:12px;border-radius:2px;flex:none;}
+.gut-lane b{font-weight:400;}
+.gut-lane .n{margin-left:auto;font-size:9px;color:var(--dim);}
+
+.tl-scroll{flex:1;min-width:0;position:relative;overflow:hidden;}
+.tl-tracks{position:relative;width:100%;}
+
+/* 掴んでいる間はカーソルを固定する。ポインタの下に何が来ても変えない。
+   伸縮中にスナップで端がポインタから離れても、手のアイコンに化けないようにする。 */
+body.panning,
+body.panning *{cursor:grabbing!important;user-select:none;}
+body.drag-move,
+body.drag-move *{cursor:grabbing!important;user-select:none;}
+body.drag-edge,
+body.drag-edge *{cursor:ew-resize!important;user-select:none;}
+
+/* 全体表示中は掴めないことを見せる */
+.tl-scroll.nopan,
+.tl-scroll.nopan *{cursor:not-allowed;}
+#dragHint.warn{color:var(--warn);}
+
+.ruler{
+  height:var(--h-ruler);position:relative;
+  border-bottom:1px solid var(--line-soft);cursor:ew-resize;user-select:none;
+}
+.ruler .tick{position:absolute;top:0;bottom:0;width:1px;background:var(--line-soft);}
+.ruler .tick.major{background:#33454C;}
+.ruler .tick span{
+  position:absolute;left:4px;top:3px;font-family:var(--font-mono);
+  font-size:9.5px;color:var(--dim);white-space:nowrap;
+}
+
+.track{position:relative;border-bottom:1px solid var(--line-soft);}
+.track-video{height:var(--h-video);}
+.track-video .vstrip{
+  position:absolute;inset:4px 0;border-radius:2px;border:1px solid #22343B;
+  background:repeating-linear-gradient(90deg,rgba(47,191,168,.10) 0 3px,rgba(47,191,168,.04) 3px 7px),#16232A;
+}
+.track-wave{height:var(--h-wave);background:#0A1114;}
+.track-wave canvas{position:absolute;inset:0;width:100%;height:100%;display:block;}
+.wave-empty{
+  position:absolute;inset:0;display:grid;place-items:center;
+  font-size:10.5px;color:var(--dim);pointer-events:none;
+}
+.wave-empty[hidden]{display:none;}
+
+.lanes{position:relative;}
+.lane{height:var(--h-lane);position:relative;border-bottom:1px solid var(--line-soft);}
+.lane.drop{background:rgba(47,191,168,.07);box-shadow:inset 0 0 0 1px rgba(47,191,168,.3);}
+
+.cue{
+  position:absolute;top:4px;height:calc(var(--h-lane) - 9px);
+  border-radius:3px;border:1px solid rgba(0,0,0,.4);
+  display:flex;align-items:center;overflow:hidden;
+  padding:0 6px;font-size:10.5px;white-space:nowrap;
+  color:#0A1113;font-weight:600;cursor:grab;user-select:none;
+  box-sizing:border-box;
+  /* ブラウザにスクロール操作と解釈させない。
+     解釈されると pointercancel が飛んでドラッグが中断する。
+     ネイティブのドラッグ&ドロップも同じ理由で止める。 */
+  touch-action:none;
+  -webkit-user-drag:none;
+}
+.cue:hover{filter:brightness(1.12);}
+.cue.dragging{cursor:grabbing;opacity:.9;z-index:20;}
+/* 枠はブロックの外周にぴったり重ねる。外側に描くと実際より大きく見え、
+   内側の box-shadow だけだと 1px の黒枠のぶん内に寄ってしまう。
+   そこで黒枠そのものを枠の色にして、その内側に 1px 足して 2px にする。 */
+.cue.sel{
+  border-color:#fff;
+  box-shadow:inset 0 0 0 1px #fff;
+  z-index:12;
+}
+.cue.cur{
+  border-color:var(--accent);
+  box-shadow:inset 0 0 0 1px var(--accent),0 0 14px -2px var(--accent);
+  z-index:11;
+}
+.cue.sel.cur{
+  border-color:#fff;
+  box-shadow:inset 0 0 0 1px #fff,inset 0 0 0 3px var(--accent);
+  z-index:13;
+}
+.cue:focus-visible{outline:2px solid #fff;outline-offset:-2px;z-index:14;}
+.cue.hidden{display:none;}
+.cue .grip{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:rgba(0,0,0,.18);}
+.cue .grip:hover{background:rgba(255,255,255,.35);}
+.cue .grip.l{left:0;border-radius:3px 0 0 3px;}
+.cue .grip.r{right:0;border-radius:0 3px 3px 0;}
+
+/* 掴める範囲を見た目より広くする。
+   見えている帯は 7px のままで、当たり判定だけブロックの内側へ 5px 伸ばす。
+   外側へは伸ばさない（隣のブロックのクリックを奪ってしまうため）。
+   一度掴み損ねると mode が move になり「伸縮のつもりが移動」になるので、
+   ここに余裕があるかどうかで操作の当たり外れが大きく変わる。 */
+.cue .grip::after{content:"";position:absolute;top:0;bottom:0;}
+.cue .grip.l::after{left:0;right:-5px;}
+.cue .grip.r::after{left:-5px;right:0;}
+/* 細いブロックでは左右の判定が重なってしまうので広げない */
+.cue.narrow .grip::after{left:0;right:0;}
+.cue .lbl{pointer-events:none;overflow:hidden;text-overflow:ellipsis;}
+.cue.narrow .lbl{display:none;}
+
+/* 目印。「ここまで編集済み」は位置の話なので、タイムラインでも見えるようにする。
+   細いブロックでも分かるよう、上辺に線を引く。 */
+.cue.marked{box-shadow:inset 0 3px 0 var(--warn),0 0 0 1px rgba(224,169,63,.55);}
+
+/* ドラッグ中、既存ブロックの端と合ったときに出す縦のガイド。
+   再生ヘッド（アクセント色）と紛れないよう黄色にしている。 */
+.snapguides{position:absolute;inset:0;pointer-events:none;z-index:29;}
+.snapguide{
+  position:absolute;top:0;bottom:0;width:1px;
+  background:var(--guide);box-shadow:0 0 7px rgba(255,224,102,.6);
+}
+.snapguide::before,
+.snapguide::after{
+  content:"";position:absolute;left:-3px;
+  border-left:3.5px solid transparent;border-right:3.5px solid transparent;
+}
+.snapguide::before{top:0;border-top:5px solid var(--guide);}
+.snapguide::after{bottom:0;border-bottom:5px solid var(--guide);}
+
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent);z-index:30;pointer-events:none;}
+.playhead::before{
+  content:"";position:absolute;top:0;left:-4.5px;
+  border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--accent);
+}
+.marquee{
+  position:absolute;z-index:25;pointer-events:none;
+  border:1px solid var(--accent);background:rgba(47,191,168,.12);
+}
+
+/* ---------- リスト ---------- */
+.list-toolbar{
+  flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;
+  background:var(--rail);border-bottom:1px solid var(--line);
+}
+.list-toolbar .inp{width:120px;}
+.list-head,.row{
+  display:grid;grid-template-columns:34px 92px minmax(0,1fr) auto 18px 24px;
+  gap:8px;align-items:start;
+}
+.list-head{
+  flex:none;height:26px;align-items:center;padding:0 10px;
+  background:var(--panel);border-bottom:1px solid var(--line);
+  font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700;
+}
+.rows{flex:1;min-height:0;overflow-y:auto;}
+.row{
+  padding:6px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer;
+}
+.row:hover{background:#131F24;}
+.row.sel{background:#182A2E;}
+.row.cur{background:#12262A;box-shadow:inset 3px 0 0 var(--accent);}
+.row.sel.cur{background:#1A3034;}
+.row.hidden{display:none;}
+
+/* 番号は目印の切り替えボタンも兼ねる。見た目は今までどおり数字だけ。 */
+.row .idx{
+  font-family:var(--font-mono);font-size:10px;color:var(--dim);
+  font-variant-numeric:tabular-nums;padding:4px 2px 0;
+  background:none;border:none;cursor:pointer;line-height:1.4;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+}
+.row .idx .mk{
+  width:7px;height:7px;border-radius:50%;
+  border:1px solid var(--line);background:transparent;
+  transition:background .12s,border-color .12s;
+}
+.row .idx:hover .mk{border-color:var(--muted);}
+.row .idx:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px;}
+
+/* 目印が付いた行。選択中・再生位置とは別の色にして紛れないようにする */
+.row.marked{background:#231D12;box-shadow:inset 3px 0 0 var(--warn);}
+.row.marked:hover{background:#2B2416;}
+.row.marked.sel{background:#2A2718;}
+.row.marked.cur{background:#26261A;box-shadow:inset 3px 0 0 var(--warn),inset 0 0 0 1px rgba(47,191,168,.35);}
+.row.marked .idx{color:var(--warn);}
+.row.marked .idx .mk{background:var(--warn);border-color:var(--warn);}
+
+/* 見出しの「印 N」。押すと目印の付いた行だけに絞る */
+.mark-filter{color:var(--warn);border-color:var(--line);}
+.mark-filter:hover:not(:disabled){border-color:var(--warn);}
+.mark-filter.on{background:var(--warn);border-color:var(--warn);color:#2A1F08;font-weight:700;}
+.row .times{display:flex;flex-direction:column;gap:1px;padding-top:2px;}
+.row .times input{
+  font-family:var(--font-mono);font-size:10.5px;font-variant-numeric:tabular-nums;
+  background:transparent;border:1px solid transparent;border-radius:3px;
+  color:var(--muted);padding:0 3px;width:100%;letter-spacing:-.02em;
+}
+.row .times input.t0{color:var(--ink);}
+.row .times input:hover{border-color:var(--line);}
+.row .times input:focus{border-color:var(--accent);outline:none;background:#0E181C;color:#fff;}
+.row .times .dur{font-family:var(--font-mono);font-size:9px;color:var(--dim);padding-left:3px;}
+.row .times .dur.warn{color:var(--warn);}
+
+.row .txt{
+  font-size:13px;line-height:1.6;background:transparent;border:1px solid transparent;
+  border-radius:4px;color:var(--ink);padding:2px 5px;resize:none;overflow:hidden;
+  width:100%;font-family:inherit;min-height:24px;display:block;
+  /* Shift+Enter で入れた改行をそのまま見せる。
+     normal のままだと画面上ではスペースに潰れ、改行できていないように見える */
+  white-space:pre-wrap;
+}
+.row.cur .txt{color:#fff;}
+.row .txt:hover{border-color:var(--line);}
+.row .txt:focus{border-color:var(--accent);outline:none;background:#0E181C;color:#fff;}
+
+.spk-cells{display:flex;gap:3px;padding-top:3px;}
+/* 縦長にして、名前は縦書きで入れる。
+   幅 19px に日本語を横に並べると 2 文字も入らないが、縦なら 4 文字入る。
+   入り切らない分は下が切れるだけで、頭の数文字は必ず見える。
+   text-orientation:upright で「A」などの英字も横倒しにならない。 */
+.spk-cell{
+  width:19px;height:38px;border-radius:3px;border:1px solid var(--line);
+  background:#111B1F;flex:none;cursor:pointer;
+  display:flex;align-items:center;
+  /* 収まるときは中央、はみ出すときは先頭から。
+     safe を付けないと中央寄せのまま溢れて、頭の文字まで切れてしまう。 */
+  justify-content:safe center;
+  padding:1px 0;overflow:hidden;
+  writing-mode:vertical-rl;text-orientation:upright;
+  font-family:var(--font-ui);font-size:10.5px;line-height:1;
+  letter-spacing:-0.1em;               /* 縦方向の字間を詰める */
+  white-space:nowrap;color:var(--dim);
+}
+.spk-cell:hover{border-color:var(--muted);color:var(--ink);}
+.spk-cell.on{border-color:transparent;color:#0A1113;font-weight:700;}
+
+.row .flags{display:flex;flex-direction:column;gap:2px;padding-top:5px;align-items:center;}
+
+/* 行ごとの操作（上: 削除 / 下: 直下に追加）*/
+.row .rowacts{display:flex;flex-direction:column;gap:3px;padding-top:1px;}
+.row .rowacts button{
+  width:22px;height:22px;padding:0;flex:none;
+  display:grid;place-items:center;
+  background:transparent;border:1px solid var(--line-soft);border-radius:4px;
+  color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
+  opacity:.45;transition:opacity .12s,border-color .12s,color .12s;
+}
+.row:hover .rowacts button{opacity:1;}
+.row .rowacts button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;opacity:1;}
+.row .addbtn:hover{border-color:var(--accent);color:var(--accent);background:#12262A;}
+.row .delbtn:hover{border-color:var(--bad);color:var(--bad);background:#2A1618;}
+/* 見出しの「!」と、そこから出る注意マークの説明 */
+.flaghead{position:relative;display:flex;align-items:center;justify-content:center;}
+.flaginfo{
+  display:grid;place-items:center;width:18px;height:18px;padding:0;
+  background:transparent;border:none;border-radius:50%;
+  color:var(--dim);cursor:help;
+}
+.flaghead:hover .flaginfo,
+.flaginfo:focus-visible{color:var(--warn);}
+.flaginfo:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+
+.flagtip{
+  display:none;position:absolute;top:calc(100% + 8px);right:-4px;
+  width:310px;padding:13px 15px;z-index:60;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  box-shadow:0 18px 44px -18px #000,0 2px 8px rgba(0,0,0,.4);
+  text-transform:none;letter-spacing:normal;font-weight:400;cursor:default;
+}
+.flaghead:hover .flagtip,
+.flaginfo:focus-visible + .flagtip{display:block;}
+.flagtip::before{   /* 見出しの「!」を指す小さな三角 */
+  content:"";position:absolute;top:-6px;right:9px;
+  border-left:6px solid transparent;border-right:6px solid transparent;
+  border-bottom:6px solid var(--line);
+}
+.ft-title{
+  font-size:12px;font-weight:700;color:var(--ink);margin-bottom:6px;letter-spacing:.04em;
+}
+.ft-lede{font-size:11.5px;line-height:1.6;color:var(--muted);margin:0 0 10px;}
+.ft-list{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:8px;}
+.ft-list li{
+  display:flex;gap:9px;align-items:flex-start;
+  font-size:11px;line-height:1.55;color:var(--muted);
+}
+.ft-list .dot{margin-top:4px;}
+.ft-txt{min-width:0;}
+.ft-list b{display:block;font-size:12px;font-weight:600;color:var(--ink);margin-bottom:1px;}
+.ft-foot{
+  font-size:11px;line-height:1.7;color:var(--muted);margin:0;
+  border-top:1px solid var(--line-soft);padding-top:9px;
+}
+
+.dot{width:7px;height:7px;border-radius:50%;flex:none;}
+.dot.ovl-same{background:var(--bad);}    /* 同じ話者どうしの重なり = 必ず直す */
+.dot.ovl-other{background:var(--warn);}  /* 別の話者との重なり = 同時発話ならそのまま */
+.dot.cps{background:var(--spk-3);}
+
+.chip{
+  display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);
+  font-size:10px;padding:2px 7px;border-radius:3px;color:#0A1113;font-weight:700;
+}
+
+/* ---------- 右クリックメニュー ---------- */
+.ctxmenu{
+  position:fixed;z-index:90;min-width:210px;padding:5px;
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;
+  box-shadow:0 18px 44px -18px #000,0 2px 8px rgba(0,0,0,.45);
+}
+.ctxmenu[hidden]{display:none;}
+.ctxmenu .cm-head{
+  padding:5px 9px 7px;margin-bottom:4px;border-bottom:1px solid var(--line-soft);
+  font-size:10.5px;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.ctxmenu .cm-head b{color:var(--ink);font-weight:600;}
+.ctxmenu button{
+  display:flex;align-items:baseline;gap:8px;width:100%;
+  padding:6px 9px;border:none;border-radius:4px;background:transparent;
+  color:var(--ink);font-size:12.5px;text-align:left;cursor:pointer;
+}
+.ctxmenu button:hover:not(:disabled),
+.ctxmenu button:focus-visible{background:#1E2C32;outline:none;}
+.ctxmenu button:disabled{color:var(--dim);cursor:default;}
+.ctxmenu button .cm-sub{
+  margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--dim);
+}
+.ctxmenu button.danger:hover:not(:disabled){background:#2A1618;color:var(--bad);}
+
+/* ---------- ヘルプ ---------- */
+.overlay{
+  position:fixed;inset:0;z-index:100;background:rgba(4,10,12,.72);
+  display:grid;place-items:center;padding:24px;
+}
+.overlay[hidden]{display:none;}
+.sheet{
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  max-width:620px;width:100%;max-height:82vh;display:flex;flex-direction:column;
+  box-shadow:0 30px 80px -30px #000;
+}
+.sheet-sm{max-width:470px;}
+.sheet-sm .sheet-head h2{color:var(--warn);}
+#warnBody{font-size:13.5px;line-height:1.8;color:var(--ink);margin:0 0 12px;}
+#warnBody b{color:var(--warn);font-weight:600;}
+#warnBody code{
+  font-family:var(--font-mono);font-size:12px;color:var(--ink);
+  background:#0E181C;border:1px solid var(--line);border-radius:3px;padding:1px 5px;
+}
+.warn-hint{font-size:12px;line-height:1.75;color:var(--muted);margin:0;}
+
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#2A0D0B;font-weight:700;}
+.btn.danger:hover{filter:brightness(1.1);}
+
+#confirmBody{font-size:13.5px;line-height:1.8;color:var(--ink);margin:0 0 12px;}
+#confirmBody b{color:var(--bad);font-weight:600;}
+.confirm-preview{
+  border:1px solid var(--line);border-left:3px solid var(--line);border-radius:5px;
+  background:#0E181C;padding:9px 11px;margin-bottom:14px;
+  max-height:180px;overflow-y:auto;
+}
+.confirm-preview .cp-row{display:flex;align-items:flex-start;gap:9px;padding:3px 0;}
+.confirm-preview .cp-row + .cp-row{border-top:1px solid var(--line-soft);margin-top:3px;padding-top:6px;}
+.confirm-preview .cp-tc{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--dim);
+  white-space:nowrap;padding-top:2px;font-variant-numeric:tabular-nums;
+}
+.confirm-preview .cp-txt{font-size:13px;line-height:1.6;color:#fff;min-width:0;}
+.confirm-preview .cp-more{font-size:11.5px;color:var(--muted);padding-top:6px;}
+.sheet-head{
+  display:flex;align-items:center;gap:12px;padding:14px 18px;
+  border-bottom:1px solid var(--line);
+}
+.sheet-head h2{margin:0;font-size:15px;flex:1;}
+.sheet-body{padding:18px;overflow-y:auto;}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:7px 18px;margin:0;font-size:12.5px;}
+.keys dt{
+  font-family:var(--font-mono);font-size:11px;color:var(--accent);
+  white-space:nowrap;text-align:right;
+}
+.keys dd{margin:0;color:var(--muted);}
+.keys dd b{color:var(--ink);font-weight:600;}
+.flags-legend{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:6px;}
+.flags-legend li{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);}
+.flags-legend .dot{flex:none;}
+.flags-legend b{color:var(--ink);font-weight:600;}
+.warn-ink{color:var(--warn);}
+
+/* ---------- 話者設定シート ---------- */
+.sheet-lede{margin:0 0 16px;font-size:12px;color:var(--muted);line-height:1.75;}
+.sheet-lede code{font-family:var(--font-mono);font-size:11px;color:var(--accent);}
+.sheet-foot{
+  display:flex;align-items:center;gap:10px;padding:12px 18px;
+  border-top:1px solid var(--line);
+}
+#spkMsg.err{color:var(--bad);}
+#spkMsg.ok{color:var(--accent);}
+
+.spk-table{display:flex;flex-direction:column;gap:7px;}
+.spk-row{
+  display:grid;grid-template-columns:26px 34px minmax(0,1fr) 74px 28px;
+  gap:9px;align-items:center;
+}
+.spk-row .lane-no{
+  font-family:var(--font-mono);font-size:10px;color:var(--dim);text-align:right;
+}
+.spk-row input[type="color"]{
+  width:34px;height:28px;padding:0;border:1px solid var(--line);border-radius:4px;
+  background:#111B1F;cursor:pointer;
+}
+.spk-row input[type="color"]::-webkit-color-swatch-wrapper{padding:3px;}
+.spk-row input[type="color"]::-webkit-color-swatch{border:none;border-radius:2px;}
+.spk-row input[type="text"]{
+  font-family:var(--font-ui);font-size:13px;background:#0E181C;
+  border:1px solid var(--line);border-radius:4px;color:var(--ink);
+  padding:5px 9px;width:100%;
+}
+.spk-row input[type="text"]:focus{border-color:var(--accent);outline:none;}
+.spk-row input[type="text"]:disabled{color:var(--muted);background:#0B1417;cursor:not-allowed;}
+.spk-row .count{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--muted);
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.spk-row .kill{
+  width:26px;height:26px;display:grid;place-items:center;padding:0;
+  background:transparent;border:1px solid var(--line);border-radius:4px;
+  color:var(--muted);cursor:pointer;font-size:13px;line-height:1;
+}
+.spk-row .kill:hover:not(:disabled){border-color:var(--bad);color:var(--bad);}
+.spk-row .kill:disabled{opacity:.3;cursor:not-allowed;}
+.spk-add{
+  display:flex;align-items:center;gap:12px;margin-top:16px;
+  padding-top:14px;border-top:1px solid var(--line-soft);
+}
+
+/* セット設定シートの見出し。話者と用語を区切る */
+.sheet-sec{
+  margin:0 0 10px;font-size:12px;font-weight:600;color:var(--ink);
+  letter-spacing:.04em;
+}
+.sheet-sec:not(:first-child){
+  margin-top:26px;padding-top:18px;border-top:1px solid var(--line-soft);
+}
+
+.vocab{display:flex;flex-direction:column;gap:14px;}
+.vocab-f{display:flex;flex-direction:column;gap:6px;}
+.vocab-lbl{font-size:11px;color:var(--dim);letter-spacing:.04em;}
+.vocab textarea{
+  width:100%;box-sizing:border-box;resize:vertical;
+  padding:9px 10px;border:1px solid var(--line);border-radius:4px;
+  background:#0E181C;color:var(--ink);
+  font-family:var(--font-mono);font-size:12px;line-height:1.7;
+}
+.vocab textarea:focus{outline:none;border-color:var(--accent);}
+.vocab textarea::placeholder{color:var(--dim);opacity:.65;}
+
+.keys-note{margin-top:20px;border-top:1px solid var(--line-soft);padding-top:14px;}
+.keys-note p{margin:0 0 12px;font-size:12px;color:var(--muted);line-height:1.75;}
+.keys-note b{color:var(--ink);}
+.keys-note code{font-family:var(--font-mono);font-size:11px;color:var(--accent);}
+
+/* ---------- 文字起こしの設定 ---------- */
+.toggle{
+  display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
+  border:1px solid var(--line);border-radius:6px;background:#0E181C;
+  padding:10px 12px;margin-bottom:4px;
+}
+.toggle:hover{border-color:var(--muted);}
+.toggle input{accent-color:var(--warn);width:16px;height:16px;margin:0;}
+.toggle-txt{font-size:13px;color:var(--muted);}
+.toggle input:checked + .toggle-txt{color:var(--warn);font-weight:700;}
+
+.cfg-key{display:flex;gap:7px;align-items:center;}
+.cfg-key .inp{flex:1;font-family:var(--font-mono);padding:5px 8px;}
+#cfgKeyState{margin:7px 0 0;}
+#cfgKeyState.ok{color:var(--accent);}
+#cfgKeyState.err{color:var(--bad);}
+
+.cfg-grid{display:flex;flex-direction:column;gap:14px;}
+.cfg-f{display:flex;flex-direction:column;gap:6px;}
+.cfg-lbl{font-size:11px;color:var(--dim);letter-spacing:.04em;}
+.cfg-f .inp,.cfg-f .sel{padding:5px 8px;font-size:12px;}
+.cfg-f input[type="number"]{max-width:150px;}
+
+.cost-cards{display:flex;gap:10px;margin-bottom:14px;}
+.cost-card{
+  flex:1;border:1px solid var(--line);border-radius:6px;background:#0E181C;
+  padding:10px 12px;display:flex;flex-direction:column;gap:2px;
+}
+.cost-lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700;}
+.cost-card b{font-family:var(--font-mono);font-size:19px;color:var(--warn);font-variant-numeric:tabular-nums;}
+
+.usage-list{
+  border:1px solid var(--line);border-radius:5px;background:#0E181C;
+  max-height:190px;overflow-y:auto;margin-bottom:14px;
+}
+.usage-row{
+  display:grid;grid-template-columns:96px 1fr auto;gap:9px;align-items:baseline;
+  padding:6px 10px;font-size:11.5px;
+}
+.usage-row + .usage-row{border-top:1px solid var(--line-soft);}
+.usage-row .u-at{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);}
+.usage-row .u-set{color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.usage-row .u-set span{color:var(--dim);}
+.usage-row .u-cost{font-family:var(--font-mono);color:var(--warn);font-variant-numeric:tabular-nums;}
+.usage-row.bad .u-cost{color:var(--bad);}
+.usage-empty{padding:12px;font-size:11.5px;color:var(--dim);}
+
+.console-links{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px;}
+.console-links a{color:var(--accent);font-size:12px;text-decoration:none;}
+.console-links a:hover{text-decoration:underline;}
+.console-links .cl-note{display:block;font-size:11px;color:var(--dim);line-height:1.6;}
+
+/* ---------- 文字起こしの実行 ---------- */
+.tr-facts{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12.5px;}
+.tr-facts th{
+  text-align:left;font-weight:400;color:var(--dim);font-size:11px;
+  padding:4px 12px 4px 0;white-space:nowrap;width:1%;
+}
+.tr-facts td{padding:4px 0;color:var(--ink);font-variant-numeric:tabular-nums;}
+.tr-facts tr.big td{font-family:var(--font-mono);font-size:17px;color:var(--warn);font-weight:700;}
+
+#trReady{margin:0 0 14px;}
+#trReady.err{color:var(--bad);}
+
+.tr-bar{height:6px;border-radius:3px;background:#0E181C;border:1px solid var(--line);overflow:hidden;margin-bottom:12px;}
+.tr-bar-fill{height:100%;width:0;background:var(--accent);transition:width .3s ease;}
+.tr-msg{margin:0 0 12px;font-size:13px;color:var(--ink);line-height:1.7;}
+.tr-msg.err{color:var(--bad);}
+.tr-msg.ok{color:var(--accent);}
+
+/* ---------- 作業時間 ----------
+   トップバーには出さない。設定メニューから開いたときだけ、
+   いま開いているセットの値をこの見出しに出す。 */
+.wl-live{
+  font-family:var(--font-mono);font-size:11.5px;font-variant-numeric:tabular-nums;
+  color:var(--dim);white-space:nowrap;
+  display:flex;align-items:center;gap:6px;
+}
+.wl-live:empty{display:none;}
+.wl-live::before{
+  content:"";width:6px;height:6px;border-radius:50%;
+  background:var(--dim);flex:none;
+}
+/* 数えている間だけ点が生きる。止まっているのがひと目で分かるように */
+.wl-live.on{color:var(--muted);}
+.wl-live.on::before{background:var(--accent);box-shadow:0 0 5px var(--accent);}
+
+.wl-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;}
+.wl-table th{
+  text-align:left;font-weight:700;color:var(--dim);font-size:10px;
+  letter-spacing:.08em;text-transform:uppercase;
+  padding:0 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.wl-table td{
+  padding:7px 10px 7px 0;border-bottom:1px solid var(--line-soft);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.wl-table td:first-child{white-space:normal;word-break:break-all;}
+.wl-table td b{font-family:var(--font-mono);color:var(--accent);font-weight:700;}
+.wl-table tr.dim td{color:var(--dim);}
+.wl-table tr.dim td b{color:var(--dim);font-weight:400;font-family:inherit;}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;}}

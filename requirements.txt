@@ -1,0 +1,45 @@
+# 動画文字起こしツール（transcribe.py / python -m traccia transcribe）の依存パッケージ
+#
+# ============================================================
+# 【この固定は Intel Mac (x86_64) 向けです】
+#
+#   Intel Mac 向け PyTorch は 2.2.2 で打ち切られているため、
+#   torch / torchaudio / numpy / huggingface_hub をそれに合わせて
+#   古いところで止めてあります。**他の環境ではそのまま入りません。**
+#
+#   Apple Silicon / Windows(CUDA) / Linux の人は、
+#   下の「--- バージョン固定が必須の依存 ---」の 4 行を消して、
+#   torch は各環境向けの手順で入れてください（https://pytorch.org/get-started/locally/）。
+#   環境別の手順は README.md の「セットアップ」にあります。
+#
+#   なお、**字幕の編集（python -m traccia edit）だけならこの中身は不要です。**
+#   編集側は標準ライブラリ + PyAV だけで動きます。
+# ============================================================
+#
+# 【重要】Intel Mac では Python 3.12 を使うこと。
+#   上記のとおり torch 2.2.2 に Python 3.13 用の wheel が存在しないため。
+#
+# セットアップ手順:
+#   python3.12 -m venv .venv
+#   .venv/bin/python -m pip install -r requirements.txt
+#
+# 実行:
+#   .venv/bin/python transcribe.py 動画.mp4                       # 文字起こしのみ
+#   .venv/bin/python transcribe.py 動画.mp4 --diarize --speakers 2 --hf-token hf_xxx  # 話者分離あり
+
+# --- 文字起こし (faster-whisper) ---
+faster-whisper==1.2.1
+ctranslate2==4.7.2
+av==17.0.1
+
+# --- 話者分離 (pyannote.audio) ---
+pyannote.audio==3.4.0
+
+# --- バージョン固定が必須の依存 ---
+# torch は Intel Mac 最後のビルド。torchaudio もこれに合わせる。
+torch==2.2.2
+torchaudio==2.2.2
+# torch 2.2.2 は NumPy 1.x ビルドのため 2.x は不可。
+numpy<2
+# huggingface_hub 1.x で use_auth_token が廃止され pyannote 3.4.0 が動かないため 1.0 未満に固定。
+huggingface_hub<1.0

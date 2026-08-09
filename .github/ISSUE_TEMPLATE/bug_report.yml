@@ -1,0 +1,103 @@
+name: バグ報告
+description: 動かない・想定と違う挙動をする
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。個人が保守しているツールなので、返信は遅いことがあります。
+
+        > **API キーや、素材の中身（実際の書き起こし本文）を貼らないでください。**
+        > ログを貼るときは、キーらしき文字列（`hf_…` / `AIza…` など）を消してから貼ってください。
+        > セキュリティ上の問題は Issue ではなく [Security タブ](https://github.com/uribow-lab/traccia/security/advisories/new) から報告してください。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きたか
+      description: 期待した動きと、実際の動きを書いてください。
+      placeholder: |
+        期待: 書き出しで話者別の .srt が 2 本出る
+        実際: 「話者A」だけ出て「話者B」が出ない
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. Traccia.command をダブルクリック
+        2. セット「princi」を開く
+        3. 「書き出し」を押す
+    validations:
+      required: true
+
+  - type: dropdown
+    id: subcommand
+    attributes:
+      label: どの機能か
+      options:
+        - edit（字幕エディタ）
+        - transcribe（ローカルの文字起こし・話者分離）
+        - エディタからの文字起こし（Gemini）
+        - wfp（Filmora のプロジェクトから字幕を取り出す）
+        - セットアップ・インストール
+        - その他 / わからない
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: 種類とバージョン。Mac は Intel か Apple Silicon かも書いてください。
+      placeholder: "macOS 13.6 (Intel) / Windows 11 23H2"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python のバージョン
+      description: "`python3 --version` の出力"
+      placeholder: "Python 3.12.7"
+    validations:
+      required: true
+
+  - type: textarea
+    id: media
+    attributes:
+      label: 素材の形式
+      description: |
+        動画そのものは添付しないでください。形式と長さだけで足ります。
+        `ffprobe` があれば、その出力の要約でも構いません。
+      placeholder: |
+        mp4 / H.264 / 音声 AAC 48kHz ステレオ / 24 分 / 880MB
+    validations:
+      required: false
+
+  - type: textarea
+    id: set-layout
+    attributes:
+      label: セットの構成
+      description: |
+        `resources/<名前>/` の中に何が入っているか。ファイル名は伏せて構いません。
+      placeholder: |
+        resources/sample/
+          sample.mp4
+          sample.srt          （「話者A: 本文」形式・109 行）
+          sample.edit.json
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ターミナルの出力
+      description: |
+        起動したターミナルに出たメッセージ。**キーらしき文字列は消してから**貼ってください。
+      render: shell
+    validations:
+      required: false

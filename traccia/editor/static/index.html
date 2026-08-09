@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Traccia</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- ============ トップバー ============ -->
+<header class="topbar">
+  <div class="brand" title="Traccia — なぞった跡 / 音声トラック（伊）">Traccia</div>
+
+  <label class="field">
+    <span class="lb">セット</span>
+    <select id="setPicker" class="sel"></select>
+  </label>
+
+  <div class="meta" id="mediaMeta"></div>
+
+  <div class="grow"></div>
+
+  <div class="hint" id="statusMsg"></div>
+  <button class="btn" id="btnTranscribe" title="このセットを Gemini で文字起こしする">文字起こし</button>
+  <button class="btn" id="btnUndo" title="元に戻す (⌘Z)">元に戻す</button>
+  <button class="btn" id="btnRedo" title="やり直し (⇧⌘Z)">やり直し</button>
+  <button class="btn" id="btnSave" title="保存 (⌘S)">保存</button>
+  <button class="btn pri" id="btnExport" title="話者ごとの .srt を export/ に書き出す">書き出し</button>
+  <button class="btn ghost" id="btnSettings" title="API キーと費用の設定">設定</button>
+  <button class="btn ghost" id="btnHelp" title="ショートカット一覧 (?)">?</button>
+</header>
+
+<!-- ============ 本体 3ペイン ============ -->
+<main class="shell" id="shell">
+
+  <!-- 左 -->
+  <section class="col-left" id="colLeft">
+
+    <!-- 左上: プレビュー -->
+    <div class="pane-preview" id="panePreview">
+      <div class="stage" id="stage">
+        <video id="video" playsinline preload="metadata"></video>
+        <div class="stage-empty" id="stageEmpty">セットを選んでください</div>
+      </div>
+
+      <!-- 現在フレームの字幕 -->
+      <div class="telop-bar" id="telopBar">
+        <span class="telop-none">（この位置に字幕はありません）</span>
+      </div>
+
+      <!-- 操作 -->
+      <div class="transport">
+        <input type="range" id="scrub" class="scrub" min="0" max="100" step="0.001" value="0" aria-label="再生位置">
+        <div class="transport-row">
+          <button class="tbtn" id="btnPrevCue" title="前の字幕へ (↑)">|◀◀</button>
+          <button class="tbtn" id="btnStepBack" title="1フレーム前 (←)">◀|</button>
+          <button class="tbtn play" id="btnPlay" title="再生 / 停止 (Space)">▶</button>
+          <button class="tbtn" id="btnStepFwd" title="1フレーム後 (→)">|▶</button>
+          <button class="tbtn" id="btnNextCue" title="次の字幕へ (↓)">▶▶|</button>
+
+          <span class="tc" id="tcNow">00:00:00.000</span>
+          <span class="tc dim" id="tcTotal">/ 00:00:00.000</span>
+
+          <div class="spacer"></div>
+
+          <label class="field"><span class="lb">表示</span>
+            <select class="sel" id="selZoom">
+              <option value="fit-h" selected>高さフィット</option>
+              <option value="fit-w">幅フィット</option>
+              <option value="0.5">50%</option>
+              <option value="1">100%</option>
+              <option value="1.5">150%</option>
+              <option value="2">200%</option>
+              <option value="3">300%</option>
+            </select>
+          </label>
+          <span class="hint" id="zoomInfo"></span>
+          <label class="field"><span class="lb">速度</span>
+            <select class="sel" id="selRate">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1.0×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2.0×</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="hsplit" id="hsplit" title="ドラッグで高さを変える"></div>
+
+    <!-- 左下: タイムライン -->
+    <div class="pane-timeline" id="paneTimeline">
+      <div class="tl-toolbar">
+        <span class="panel-label">タイムライン</span>
+        <span class="tc dim" id="viewRange">--:-- — --:--</span>
+        <button class="btn sm" id="btnZoomOut" title="縮小 (−)">−</button>
+        <button class="btn sm" id="btnZoomIn" title="拡大 (＋)">＋</button>
+        <button class="btn sm" id="btnZoomFit" title="全体を表示 (0)">全体</button>
+        <label class="check"><input type="checkbox" id="chkFollow" checked><span>再生に追従</span></label>
+        <label class="check"><input type="checkbox" id="chkSnap" checked><span>スナップ</span></label>
+        <div class="spacer"></div>
+        <span class="hint" id="dragHint">ブロック＝移動 / 端＝伸縮 / 縦＝話者変更　·　ホイール＝拡大縮小 / 余白を右ドラッグ＝表示位置の移動</span>
+      </div>
+
+      <div class="tl-body" id="tlBody">
+        <div class="tl-gutter" id="tlGutter">
+          <div class="gut-cell gut-ruler"></div>
+          <div class="gut-cell" data-track="video">動画</div>
+          <div class="gut-cell" data-track="wave">
+            <span>波形</span>
+            <button class="micro" id="btnWave" title="PCM 波形を抽出する">抽出</button>
+          </div>
+          <div id="gutLanes"></div>
+        </div>
+
+        <div class="tl-scroll" id="tlScroll">
+          <div class="tl-tracks" id="tlTracks">
+            <div class="ruler" id="ruler"></div>
+            <div class="track track-video"><div class="vstrip"></div></div>
+            <div class="track track-wave">
+              <canvas id="waveCanvas"></canvas>
+              <div class="wave-empty" id="waveEmpty">波形は未抽出 — 「抽出」で作れます（文字起こし時に作られていればここに出ます）</div>
+            </div>
+            <div class="lanes" id="lanes"></div>
+            <div class="snapguides" id="snapGuides"></div>
+            <div class="playhead" id="playhead"></div>
+            <div class="marquee" id="marquee" hidden></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="vsplit" id="vsplit" title="ドラッグで幅を変える"></div>
+
+  <!-- 右: リスト -->
+  <section class="col-right" id="colRight">
+    <div class="list-toolbar">
+      <span class="panel-label">字幕リスト</span>
+      <span class="hint" id="listCount">0 件</span>
+      <div class="spacer"></div>
+      <input type="search" id="listFilter" class="inp" placeholder="本文を検索…">
+      <button class="btn sm mark-filter" id="btnMarks" hidden>印 0</button>
+      <button class="btn sm" id="btnSpeakers" title="話者の名前と色を編集する">話者設定</button>
+    </div>
+
+    <div class="list-head">
+      <span>#</span><span>タイム</span><span>本文</span><span id="listHeadSpk">話者</span>
+      <span class="flaghead">
+        <button class="flaginfo" id="flagInfo" aria-describedby="flagTip"
+                aria-label="注意マークの種類">
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+            <circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 4.4v4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <circle cx="8" cy="11.6" r="1.05" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="flagtip" id="flagTip" role="tooltip">
+          <div class="ft-title">注意マーク</div>
+          <p class="ft-lede">人が見て判断した方がよい箇所に付きます。誤りとは限りません。</p>
+          <ul class="ft-list">
+            <li><span class="dot ovl-same"></span><span class="ft-txt"><b>同じ話者の中で重なっている</b>同じ人が同時に二言喋ることはないので、必ず直す</span></li>
+            <li><span class="dot ovl-other"></span><span class="ft-txt"><b>別の話者と重なっている</b>同時発話ならそのままでよい。意図しない重なりだけ直す</span></li>
+            <li><span class="dot cps"></span><span class="ft-txt"><b>表示速度が 9 字/秒を超えている</b>読み切れない。尺を伸ばすか S で分割</span></li>
+          </ul>
+          <p class="ft-foot">
+            尺が 0.4 秒未満 / 12 秒超のときは、時間の下の秒数が<b class="warn-ink">黄色</b>になります。<br>
+            各マークにカーソルを合わせると、その行の具体的な数値が出ます。
+          </p>
+        </div>
+      </span>
+      <span></span>
+    </div>
+
+    <div class="rows" id="rows"></div>
+
+  </section>
+</main>
+
+<!-- ============ 右クリックメニュー ============ -->
+<div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
+
+<!-- ============ 確認 ============ -->
+<div class="overlay" id="confirmOverlay" hidden>
+  <div class="sheet sheet-sm">
+    <div class="sheet-head">
+      <h2 id="confirmTitle">削除の確認</h2>
+    </div>
+    <div class="sheet-body">
+      <p id="confirmBody"></p>
+      <div class="confirm-preview" id="confirmPreview"></div>
+      <p class="warn-hint">取り消したいときは ⌘Z で戻せます。</p>
+    </div>
+    <div class="sheet-foot">
+      <div class="spacer"></div>
+      <button class="btn" id="btnConfirmCancel">やめる</button>
+      <button class="btn danger" id="btnConfirmOk">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 警告 ============ -->
+<div class="overlay" id="warnOverlay" hidden>
+  <div class="sheet sheet-sm">
+    <div class="sheet-head">
+      <h2 id="warnTitle">追加できません</h2>
+    </div>
+    <div class="sheet-body">
+      <p id="warnBody"></p>
+      <p class="warn-hint" id="warnHint"></p>
+    </div>
+    <div class="sheet-foot">
+      <div class="spacer"></div>
+      <button class="btn pri" id="btnWarnOk">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 話者設定 ============ -->
+<div class="overlay" id="spkOverlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>セットの設定</h2>
+      <button class="btn ghost" id="btnSpkClose">閉じる</button>
+    </div>
+    <div class="sheet-body">
+      <h3 class="sheet-sec">話者</h3>
+      <p class="sheet-lede">
+        名前を変えると、その話者のすべての字幕と書き出しファイル名
+        （<code>&lt;名前&gt;.話者X.srt</code> の X）が一緒に変わります。
+        「適用して保存」を押すと、<code>settings.json</code>（名前と色）と
+        <code>edit.json</code>（字幕側の話者）を<b>両方まとめて保存</b>します。
+        右上の「保存」を別途押す必要はありません。
+      </p>
+
+      <div class="spk-table" id="spkTable"></div>
+
+      <div class="spk-add">
+        <button class="btn" id="btnSpkAdd">話者を追加</button>
+        <span class="hint">レーンの並びは上から順です。「不明」は常に最後になります。</span>
+      </div>
+
+      <h3 class="sheet-sec">この動画に出てくる固有名詞</h3>
+      <p class="sheet-lede">
+        店名・地名・商品名・人名など、<b>耳慣れないので化けやすい語</b>を 1 行に 1 つ書きます。
+        次に<b>文字起こしをするときの手がかり</b>になり、この表記で書かれやすくなります。
+        すでにある字幕は変わりません。
+      </p>
+      <div class="vocab">
+        <label class="vocab-f">
+          <span class="vocab-lbl">固有名詞（1行に1つ）</span>
+          <textarea id="vocabTerms" rows="6" spellcheck="false"
+            placeholder="代官山&#10;中目黒&#10;リコッタチーズ"></textarea>
+        </label>
+        <label class="vocab-f">
+          <span class="vocab-lbl">場面の説明</span>
+          <textarea id="vocabNote" rows="3" spellcheck="false"
+            placeholder="カフェでの雑談。3人のうち1人は店員"></textarea>
+          <span class="hint">
+            どんな場面か一言で。話し言葉の調子を掴む助けになります。
+          </span>
+        </label>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <span class="hint" id="spkMsg"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnSpkCancel">取り消す</button>
+      <button class="btn pri" id="btnSpkApply">適用して保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 文字起こし（Gemini）の設定 ============ -->
+<div class="overlay" id="cfgOverlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>文字起こしの設定</h2>
+      <button class="btn ghost" id="btnCfgClose">閉じる</button>
+    </div>
+    <div class="sheet-body">
+
+      <h3 class="sheet-sec">Gemini を使う / 使わない</h3>
+      <p class="sheet-lede">
+        Gemini は<b>有料</b>です（3.6 Flash の実測でおよそ <b>1 時間の動画あたり $2</b>）。
+        キーを入れただけでは動きません。使うときにここで<b>「使う」に切り替え</b>ます。
+        押し間違いで課金されるのを防ぐための切り替えなので、
+        終わったら「使わない」に戻しておくのが安全です。<br>
+        <b>無料で済ませたいとき</b>は Gemini を使わず、先にローカルで文字起こししてください
+        （<code>python -m traccia transcribe 動画.mp4 --diarize</code>）。
+      </p>
+      <label class="toggle">
+        <input type="checkbox" id="cfgEnabled">
+        <span class="toggle-txt">Gemini 文字起こしを使う</span>
+      </label>
+
+      <h3 class="sheet-sec">API キー</h3>
+      <p class="sheet-lede">
+        Google AI Studio で取得したキーを入れます。
+        保存先は <code id="cfgPath">~/.traccia/config.json</code> で、
+        本人だけが読める権限で書きます。<b>素材フォルダには入りません</b>。
+        環境変数 <code>GEMINI_API_KEY</code> があれば、キー未設定のときはそちらを使います。
+      </p>
+      <div class="cfg-key">
+        <input type="password" id="cfgKey" class="inp" spellcheck="false"
+               autocomplete="off" placeholder="AIza…">
+        <button class="btn" id="btnCfgTest" title="キーが通るか確かめる（費用はかかりません）">確認</button>
+        <button class="btn" id="btnCfgClear" title="保存したキーを消す">消す</button>
+      </div>
+      <p class="hint" id="cfgKeyState"></p>
+
+      <h3 class="sheet-sec">モデルと送り方</h3>
+      <div class="cfg-grid">
+        <label class="cfg-f">
+          <span class="cfg-lbl">モデル</span>
+          <select class="sel" id="cfgModel"></select>
+        </label>
+        <label class="cfg-f">
+          <span class="cfg-lbl">1 回に送る長さ（秒）</span>
+          <input type="number" id="cfgChunk" class="inp" min="30" max="300" step="10">
+          <span class="hint">長いほど話者の取り違えが減り、回数も減ります。短くすると 1 回が軽くなります。</span>
+        </label>
+        <label class="cfg-f">
+          <span class="cfg-lbl">今月の上限（USD）</span>
+          <input type="number" id="cfgLimit" class="inp" min="0" step="0.5">
+          <span class="hint">今月の累積＋今回の想定がこれを超えるときは実行しません。0 で上限なし。</span>
+        </label>
+      </div>
+
+      <h3 class="sheet-sec">これまでの費用（手元の記録）</h3>
+      <div class="cost-cards">
+        <div class="cost-card"><span class="cost-lbl">今月</span><b id="cfgMonth">$0.00</b><span class="hint" id="cfgMonthN"></span></div>
+        <div class="cost-card"><span class="cost-lbl">累積</span><b id="cfgTotal">$0.00</b><span class="hint" id="cfgTotalN"></span></div>
+      </div>
+      <p class="sheet-lede">
+        上の金額は<b>請求書ではありません</b>。応答に入っている実測トークン数に、
+        こちらが持っている単価表を掛けた見積もりです。単価の改定・無料枠・割引は反映されません。
+        <b>実費は Google のコンソール</b>で確認してください（反映は 1 日ほど遅れます）。
+      </p>
+      <div class="usage-list" id="cfgUsage"></div>
+      <ul class="console-links" id="cfgConsoles"></ul>
+
+    </div>
+    <div class="sheet-foot">
+      <span class="hint" id="cfgMsg"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnCfgCancel">取り消す</button>
+      <button class="btn pri" id="btnCfgSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 文字起こしの実行 ============ -->
+<div class="overlay" id="trOverlay" hidden>
+  <div class="sheet sheet-sm">
+    <div class="sheet-head">
+      <h2 id="trTitle">Gemini で文字起こし</h2>
+      <button class="btn ghost" id="btnTrClose">閉じる</button>
+    </div>
+
+    <div class="sheet-body">
+      <!-- 実行前 -->
+      <div id="trConfirm">
+        <table class="tr-facts">
+          <tr><th>セット</th><td id="trSet">—</td></tr>
+          <tr><th>動画の長さ</th><td id="trDur">—</td></tr>
+          <tr><th>送る回数</th><td id="trChunks">—</td></tr>
+          <tr><th>モデル</th><td id="trModel">—</td></tr>
+          <tr class="big"><th>想定費用</th><td id="trCost">—</td></tr>
+          <tr><th>今月ここまで</th><td id="trMonth">—</td></tr>
+        </table>
+
+        <p class="warn-hint" id="trReady"></p>
+
+        <p class="sheet-lede">
+          いまの字幕は<b>すべて置き換わります</b>。
+          直前の <code>edit.json</code> は <code>backup/</code> に退避するので戻せますが、
+          <b>⌘Z では戻りません</b>。元の .srt には触りません。<br>
+          セットの設定に書いた<b>固有名詞と場面の説明</b>、それに<b>話者の名前</b>は、
+          そのまま手がかりとして渡します。
+        </p>
+
+        <label class="cfg-f">
+          <span class="cfg-lbl">話者の人数（分かっていれば）</span>
+          <input type="number" id="trSpeakers" class="inp" min="0" max="12" step="1" placeholder="未指定">
+          <span class="hint">話者設定に名前があるときは、その名前を使わせます（人数指定より優先）。</span>
+        </label>
+      </div>
+
+      <!-- 実行中・結果 -->
+      <div id="trRun" hidden>
+        <div class="tr-bar"><div class="tr-bar-fill" id="trBarFill"></div></div>
+        <p class="tr-msg" id="trMsg">準備しています…</p>
+        <table class="tr-facts">
+          <tr><th>経過</th><td id="trElapsed">0 秒</td></tr>
+          <tr><th>ここまでの実測</th><td id="trSpent">$0.0000</td></tr>
+        </table>
+        <p class="hint">
+          ブラウザを閉じても処理は続きます。中止すると、いま送っている 1 本が終わったところで止まり、
+          <b>そこまでの分は課金されます</b>（取り込みも、そこまでの分だけ行います）。
+        </p>
+      </div>
+    </div>
+
+    <div class="sheet-foot">
+      <span class="hint" id="trFoot"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnTrCancel">やめる</button>
+      <button class="btn danger" id="btnTrStop" hidden>中止する</button>
+      <button class="btn pri" id="btnTrGo">実行する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 作業時間の一覧 ============ -->
+<div class="overlay" id="wlOverlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>作業時間</h2>
+      <span class="wl-live" id="wlLive"></span>
+      <button class="btn ghost" id="btnWlClose">閉じる</button>
+    </div>
+    <div class="sheet-body" id="wlBody"></div>
+  </div>
+</div>
+
+<!-- ============ ヘルプ ============ -->
+<div class="overlay" id="helpOverlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>ショートカット</h2>
+      <button class="btn ghost" id="btnHelpClose">閉じる</button>
+    </div>
+    <div class="sheet-body">
+      <dl class="keys">
+        <dt>Space</dt><dd>再生 / 停止</dd>
+        <dt>← →</dt><dd>1フレーム移動（⇧ で 1秒）</dd>
+        <dt>↑ ↓</dt><dd>前 / 次の字幕を選択して移動</dd>
+        <dt>A</dt><dd><b>新しい字幕を足す</b>（2秒）。選択中のブロックの<b>終わりから</b>、同じ話者で。選択が無ければ再生位置から</dd>
+        <dt>I / O</dt><dd>選択中の字幕の <b>開始 / 終了</b> を再生位置に合わせる</dd>
+        <dt>Alt + 1…9</dt><dd>選択中の字幕の話者を変更</dd>
+        <dt>Enter</dt><dd>選択中の字幕の本文を編集（編集中の Enter で確定）</dd>
+        <dt>⇧Enter</dt><dd>本文の編集中に<b>改行を入れる</b>（2 行字幕）</dd>
+        <dt>S</dt><dd>再生ヘッドで字幕を分割（本文は<b>両方に同じもの</b>が入る。要らない方を消す）</dd>
+        <dt>M</dt><dd>次の字幕と結合</dd>
+        <dt>Delete</dt><dd>選択中の字幕を削除</dd>
+        <dt>＋ − 0</dt><dd>タイムライン拡大 / 縮小 / 全体表示</dd>
+        <dt>⌘Z / ⇧⌘Z</dt><dd>元に戻す / やり直し</dd>
+        <dt>⌘S</dt><dd>保存</dd>
+      </dl>
+      <div class="keys-note">
+        <p><b>マウス操作</b><br>
+        ブロック本体をドラッグ＝字幕全体を移動 ／ 左右の端をドラッグ＝開始・終了だけを移動 ／
+        上下のレーンへドラッグ＝話者を変更。Alt を押しながらドラッグするとスナップを一時的に切ります。</p>
+        <p><b>拡大縮小と表示位置</b><br>
+        タイムラインの上で<b>ホイールを回す</b>と、カーソルの位置を軸に拡大・縮小します（上へ回すと拡大）。
+        トラックパッドのピンチも同じです。<br>
+        表示位置を動かすには、字幕のない余白を<b>右ドラッグ</b>します（カーソルが手になります）。
+        <b>中ボタンドラッグ</b>、<b>Alt+左ドラッグ</b>、<b>⇧＋ホイール</b>、<b>ホイールの左右</b>でも動きます
+        ── トラックパッドなどで右ドラッグが効かない環境では Alt+左ドラッグを使ってください。<br>
+        レーンが画面に収まらないときの縦スクロールは <b>Alt＋ホイール</b>です。</p>
+        <p>タイムラインが<b>全体表示</b>のときは、表示範囲が動画全体と同じなので位置を動かせません。
+        先に拡大してください。</p>
+        <p><b>まとめて選ぶ</b><br>
+        ⇧クリック＝直前に選んだものからの範囲 ／ ⌘クリック＝1件ずつ追加・解除 ／
+        左のレーン見出し（話者A など）をクリック＝その話者を全選択。<br>
+        選んだあと <code>Alt+1…9</code> で話者をまとめて付け替えられます。誤判定が固まっているときはこれが一番速い方法です。</p>
+        <p><b>字幕を足す</b><br>
+        3 つの入口があります。どれも本文は空で作られ、そのまま入力できます。
+        長さは、キーとリストの「+」が 2 秒、タイムラインのダブルクリックは
+        <b>画面上で 40px ぶん</b>（倍率が変わっても掴める大きさを保つため）です。</p>
+        <ul class="flags-legend">
+          <li><b>A</b> キー — 選択中のブロックの<b>終わりから</b>、同じ話者で足す。選択が無ければ再生位置から</li>
+          <li><b>タイムラインの空きをダブルクリック</b> — そのレーン（＝その話者）のその位置に足す</li>
+          <li><b>リスト右端の「+」</b> — その行の終わりから、同じ話者で直下に足す</li>
+        </ul>
+        <p>同じ話者のブロックと重なる場合は<b>作らずに警告を出します</b>。長さを勝手に詰めることはしません。
+        別の話者と時間が重なるのは、同時発話としてありうるので許可しています。</p>
+
+        <p><b>注意マーク</b><br>
+        自動チェックが、人が見て判断した方がよい箇所に付ける印です。リストの右側に出ます。
+        誤りとは限りません。各マークにカーソルを合わせるとその行の具体的な数値が出ます。
+        種類はリスト見出しの <b>!</b> にカーソルを合わせても確認できます。</p>
+        <ul class="flags-legend">
+          <li><span class="dot ovl-same"></span><b>同じ話者の中で重なっている</b> — 必ず直す</li>
+          <li><span class="dot ovl-other"></span><b>別の話者と重なっている</b> — 同時発話ならそのままでよい</li>
+          <li><span class="dot cps"></span><b>表示速度が速すぎる</b>（9字/秒 超）— 尺を伸ばすか <code>S</code> で分割</li>
+        </ul>
+        <p>時間の下の秒数が<b class="warn-ink">黄色</b>のときは、<b>尺が極端</b>という意味です（0.4秒未満、または 12秒超）。
+        抽出ミスが残っている箇所の目印になります。</p>
+
+        <p><b>目印</b><br>
+        リストの<b>行頭の番号をクリック</b>すると、その字幕に目印が付きます。もう一度で外れます。
+        意味は決めていません。「あとで見直す」「ここまで編集済み」など、そのとき決めて使ってください。
+        複数選択した状態で番号を押すと、選んだぶんをまとめて切り替えます。<br>
+        目印の付いた行は<b>背景が変わり</b>、タイムラインのブロックにも印が出ます。
+        リスト見出しの「<b>印 N</b>」を押すと、目印の付いた行だけに絞り込めます（本文検索と併用できます）。
+        目印は <code>edit.json</code> に残りますが、<b>書き出す .srt には入りません</b>。</p>
+
+        <p><b>2 行の字幕</b><br>
+        本文の編集中に <code>⇧Enter</code> を押すと改行が入ります。リストとプレビューのテロップに
+        そのまま 2 行で出て、書き出した .srt も 2 行になります。
+        タイムラインのブロックは 1 行しか入らないので、改行は <b>⏎</b> で表しています。<br>
+        <b>空行は作れません。</b><code>⇧Enter</code> を続けて押しても 1 つの改行にまとめます。
+        .srt は空行を字幕の区切りに使うため、空行が入ると書き出したあとに本文が失われるからです。</p>
+
+        <p><b>作業時間</b><br>
+        編集にかけた時間を裏で記録しています。<b>常時は表示しません。</b>
+        右上の「設定」→「作業時間」で開くと、動画長・字幕数・話者数と並べて見られます。
+        次の仕事を見積もるときの目安に使えます。
+        数えるのは<b>実際に手が動いていた時間</b>だけで、最後の操作から 120 秒が過ぎたあと、
+        タブが隠れているあいだ、<b>動画を再生しているあいだ</b>、文字起こしの待ちのあいだは数えません
+        （再生・停止の操作そのものは数えます）。左の点が光っているときが計測中です。</p>
+
+        <p><b>文字起こし</b><br>
+        上の「文字起こし」で、いま開いているセットを <b>Gemini</b> に書き起こさせます。
+        <b>有料</b>です（3.6 Flash の実測でおよそ 1 時間の動画あたり $2）。実行前に想定費用が出ます。
+        セットの設定に書いた<b>固有名詞・場面の説明</b>と<b>話者の名前</b>は、そのまま手がかりとして渡ります。
+        結果は<b>いまの字幕をすべて置き換えます</b>（直前の <code>edit.json</code> は <code>backup/</code> に退避。⌘Z では戻りません）。
+        動画だけ入れたセットでも実行できます。</p>
+        <p><b>無料で済ませたいとき</b>は Gemini を使わず、先にローカルで文字起こしします。<br>
+        <code>python -m traccia transcribe 動画.mp4 --diarize --split-speakers</code><br>
+        できた <code>dest/&lt;名前&gt;/</code> をそのまま素材フォルダに置けばセットになります。</p>
+        <p><b>API キーと費用</b><br>
+        「設定」で API キー・使う / 使わない・モデル・今月の上限を決めます。
+        キーは <code>~/.traccia/config.json</code> に本人だけが読める権限で保存され、素材フォルダには入りません。
+        <b>キーを入れただけでは動きません</b>。「使う」に切り替えたときだけ動きます。
+        これまでの費用も同じ画面に出ます。ただしそれは手元の見積もりで、<b>実費は Google のコンソール</b>が正本です。</p>
+
+        <p><b>保存先</b><br>
+        編集内容は <code>&lt;セット&gt;/&lt;名前&gt;.edit.json</code>、書き出しは <code>&lt;セット&gt;/export/</code> です。
+        元の .srt は書き換えません。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

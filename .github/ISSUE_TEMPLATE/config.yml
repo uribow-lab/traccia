@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使い方の質問
+    url: https://github.com/uribow-lab/traccia/blob/main/README.md
+    about: まず README を見てください。セットアップ・操作・画面の説明はここに全部あります。
+  - name: 文字起こし側の詳細
+    url: https://github.com/uribow-lab/traccia/blob/main/manual.md
+    about: transcribe の引数・処理時間の目安・出力ファイルの一覧。
+  - name: API キーの取り方
+    url: https://github.com/uribow-lab/traccia/blob/main/docs/api-keys.md
+    about: HF_TOKEN / GEMINI_API_KEY などの取得手順と、詰まりやすいところ。
+  - name: セキュリティ上の問題の報告
+    url: https://github.com/uribow-lab/traccia/security/advisories/new
+    about: 公開 Issue ではなく、こちらから非公開で報告してください。

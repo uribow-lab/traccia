@@ -1,0 +1,28 @@
+name: 質問・要望
+description: 使い方でわからないこと、こうなっていたら助かること
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        個人の作業のために作ったツールなので、**要望に応えられるとは限りません。**
+        機能追加の PR も基本的には受けていません（[CONTRIBUTING.md](https://github.com/uribow-lab/traccia/blob/main/CONTRIBUTING.md)）。
+        それでも、困りどころが分かるのはありがたいので、書いていただけると助かります。
+
+        > API キーや、素材の中身（実際の書き起こし本文）は貼らないでください。
+
+  - type: textarea
+    id: body
+    attributes:
+      label: 内容
+      description: 何に困っているか、どうなっていると助かるか。
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: 環境（任意）
+      placeholder: "macOS 13.6 (Intel) / Python 3.12.7"
+    validations:
+      required: false
