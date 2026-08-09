@@ -46,6 +46,24 @@ class Line:
     speaker: str | None = None
 
 
+# 空白を前に置きたくない文字。「そうですね。」を「そうですね 」にしないためのもの。
+CLOSING_RE = re.compile(r"\s+(?=[」』）〉》】〕］｝、！？…‥)\]},.!?])")
+
+
+def drop_periods(s: str) -> str:
+    """本文から「。」を取る。文の途中なら半角スペース、行末なら何も残さない。
+
+    字幕は 1 区間が 1 発話なので、末尾の「。」は場所を取るだけで意味が無い。
+    途中の「。」は文の切れ目が見えなくなると読みにくいので、空白に置き換える。
+    閉じ括弧の直前だけは詰める（「そうですね 」と空白が浮くのを避ける）。
+
+    traccia/gemini.py にも同じものがある。このファイルは話者分離のワーカーとして
+    単体で起動するため（冒頭の注記）パッケージ内 import ができず、共通化できない。
+    """
+    t = re.sub(r"\s+", " ", str(s or "").replace("。", " "))
+    return CLOSING_RE.sub("", t).strip()
+
+
 def format_timestamp(seconds: float) -> str:
     """秒数を SRT 形式のタイムスタンプ (HH:MM:SS,mmm) に変換する。"""
     millis = int(round(seconds * 1000))
@@ -523,8 +541,9 @@ def main() -> int:
     # segments はジェネレータなので一度だけ展開し、進捗を表示する
     lines: list[Line] = []
     for seg in segments:
-        lines.append(Line(start=seg.start, end=seg.end, text=seg.text))
-        print(f"  [{format_timestamp(seg.start)}] {seg.text.strip()}")
+        text = drop_periods(seg.text)
+        lines.append(Line(start=seg.start, end=seg.end, text=text))
+        print(f"  [{format_timestamp(seg.start)}] {text}")
 
     if args.diarize:
         turns = run_diarization(str(input_path), args.hf_token, args.speakers, args.device,

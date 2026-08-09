@@ -323,6 +323,25 @@ def join_ja(s: str) -> str:
     return re.sub(r"(?<=[^\x00-\x7F])\s+|\s+(?=[^\x00-\x7F])", "", s).strip()
 
 
+# 空白を前に置きたくない文字。「そうですね。」を「そうですね 」にしないためのもの。
+# 閉じ括弧と句読点の類だけを見る。開き括弧の後ろは「。」がまず来ないので触らない。
+CLOSING_RE = re.compile(r"\s+(?=[」』）〉》】〕］｝、！？…‥)\]},.!?])")
+
+
+def drop_periods(s: str) -> str:
+    """本文から「。」を取る。文の途中なら半角スペース、行末なら何も残さない。
+
+    字幕は 1 区間が 1 発話なので、末尾の「。」は場所を取るだけで意味が無い。
+    途中の「。」は文の切れ目が見えなくなると読みにくいので、空白に置き換える。
+    「。」を空白にして前後を詰めれば、どちらの場合も同じ 1 つの規則で片づく。
+
+    ただし閉じ括弧の直前だけは詰める。「そうですね。」がそのままだと
+    「そうですね 」となり、括弧の中に空白が浮いて見えるため。
+    """
+    t = re.sub(r"\s+", " ", str(s or "").replace("。", " "))
+    return CLOSING_RE.sub("", t).strip()
+
+
 SPEAKER_PREFIX_RE = re.compile(r"^\s*話者\s*")
 
 
@@ -384,7 +403,9 @@ def _accept(segs: list[dict], *, offset: float, lo: float, hi: float,
             end = float(s["end"]) + offset
         except (KeyError, TypeError, ValueError):
             continue
-        text = join_ja(str(s.get("text") or ""))
+        # join_ja が先。逆にすると、「。」の代わりに入れた半角スペースを
+        # join_ja が「日本語の間の空白」とみなして消してしまう。
+        text = drop_periods(join_ja(str(s.get("text") or "")))
         if not text:
             continue
 

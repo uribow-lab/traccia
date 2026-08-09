@@ -67,6 +67,7 @@ const PREFS_DEFAULT = {
   playbackRate: "1",
   follow: true,          // 再生に追従
   snap: true,            // スナップ
+  skipDeleteConfirm: false,  // 本文があっても削除の確認を出さない
   lastSet: null,
   sets: {},              // { セット名: { view:[t0,t1], time: 秒 } }
 };
@@ -670,7 +671,7 @@ function buildRows() {
     const del = document.createElement("button");
     del.className = "delbtn";
     del.textContent = "−";
-    del.title = "この字幕を削除する（確認あり）";
+    del.title = delBtnTitle();
 
     const add = document.createElement("button");
     add.className = "addbtn";
@@ -764,6 +765,23 @@ function rebuildAll() {
 function paintSelection() {
   for (const [id, d] of cueEls) d.classList.toggle("sel", S.sel.has(id));
   for (const [id, r] of rowEls) r.classList.toggle("sel", S.sel.has(id));
+}
+
+function revealSelectedRow() {
+  // 絞り込みを切り替えるとリストの中身が入れ替わるが、スクロール位置はそのまま
+  // 残る。150 番目だけを表示させて選び、絞り込みを解いたときに先頭の 1〜20 が
+  // 出て選んだ行が画面外に消えるのはこのため。選択したものが見えている状態を保つ。
+  const cue = selectedCues()[0];
+  if (!cue) return;
+  const row = rowEls.get(cue.id);
+  if (!row || row.classList.contains("hidden")) return;   // 絞り込みで消えた行は追わない
+
+  const box = el.rows;
+  // すでに見えているなら動かさない。読んでいる位置が勝手にずれるほうが煩わしい。
+  if (row.offsetTop >= box.scrollTop &&
+      row.offsetTop + row.offsetHeight <= box.scrollTop + box.clientHeight) return;
+
+  box.scrollTop = Math.max(0, row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2);
 }
 function select(ids, additive) {
   if (!additive) S.sel.clear();
@@ -1332,6 +1350,12 @@ function mergeWithNext() {
   status("次の字幕と結合しました", "ok");
 }
 
+function delBtnTitle() {
+  return P.skipDeleteConfirm
+    ? "この字幕を削除する（確認なし・⌘Z で戻せます）"
+    : "この字幕を削除する（確認あり）";
+}
+
 /** 実際に消す。確認は呼び出し側の責任。 */
 function removeCues(cues) {
   if (!cues.length) return;
@@ -1344,8 +1368,12 @@ function removeCues(cues) {
 }
 
 /** Delete キー用。1 件はそのまま消す（⌘Z で戻せる）、複数のときだけ確認する。 */
-/** 本文が 1 つも入っていないなら、消しても失うものが無いので確認しない。 */
+/** 本文が 1 つも入っていないなら、消しても失うものが無いので確認しない。
+ *
+ * 設定で「確認を出さない」にしているときは、本文があっても聞かない。
+ * 消したものは removeCues が pushUndo しているので ⌘Z で戻せる。 */
 function needsDeleteConfirm(cues) {
+  if (P.skipDeleteConfirm) return false;
   return cues.some(c => c.text.trim());
 }
 
@@ -2577,12 +2605,40 @@ function openSettingsMenu() {
   };
   add("文字起こしの設定", "API キー・費用", () => openConfigSheet());
   add("作業時間", "見積もりの目安", () => openWorkSheet());
+  add("編集の設定", P.skipDeleteConfirm ? "削除の確認は出さない" : "削除の確認を出す",
+      () => openEditPrefsSheet());
 
   el.ctxMenu.hidden = false;
   // 画面の右端からはみ出さないように、ボタンの右端に合わせる
   const w = el.ctxMenu.offsetWidth;
   el.ctxMenu.style.left = `${Math.max(6, Math.min(box.right - w, window.innerWidth - w - 6))}px`;
   el.ctxMenu.style.top = `${box.bottom + 5}px`;
+}
+
+/* ---------- 編集の設定 ----------
+   字幕そのものではなく、編集のしかたに関わる好みを置く。
+   この PC の設定なので localStorage に入れ、素材フォルダには書かない。 */
+function openEditPrefsSheet() {
+  el.edSkipConfirm.checked = !!P.skipDeleteConfirm;
+  el.edOverlay.hidden = false;
+  el.edSkipConfirm.focus();
+}
+
+/** 削除の確認を出すかどうか。切り替えたらすぐ効く（保存ボタンは置かない）。
+ *
+ * 本文が空のブロックはこの設定に関わらず、これまでどおり確認せずに消える。
+ * 「出さない」にしても消したものは ⌘Z で戻せるので、そこは毎回伝える。 */
+function applyDeleteConfirmPref(skip) {
+  P.skipDeleteConfirm = !!skip;
+  savePrefs();
+  // 「−」の説明も合わせる。作り直すほどではないので、その場で書き換える
+  for (const row of rowEls.values()) {
+    const del = row.querySelector(".delbtn");
+    if (del) del.title = delBtnTitle();
+  }
+  status(P.skipDeleteConfirm
+    ? "削除の確認を出しません（⌘Z で戻せます）"
+    : "削除の確認を出します", "ok");
 }
 
 /* ---------- 作業時間の一覧（見積もりの目安） ---------- */
@@ -2666,6 +2722,7 @@ function initRefs() {
     "trTitle","trConfirm","trRun","trSet","trDur","trChunks","trModel","trCost","trMonth",
     "trReady","trSpeakers","trBarFill","trMsg","trElapsed","trSpent","trFoot",
     "wlOverlay","wlBody","btnWlClose","wlLive",
+    "edOverlay","btnEdClose","edSkipConfirm",
   ]) el[id] = $(id);
 }
 
@@ -2839,6 +2896,7 @@ function initEvents() {
   el.btnMarks.addEventListener("click", () => {
     S.markOnly = !S.markOnly;
     refreshRows();
+    revealSelectedRow();   // 絞り込みの切り替えで選択した行を見失わない
   });
   el.listFilter.addEventListener("compositionend", applyFilter);
   el.listFilter.addEventListener("search", applyFilter);   // ✕ で消したとき
@@ -2909,6 +2967,15 @@ function initEvents() {
   el.wlOverlay.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (e.key === "Escape") { e.preventDefault(); el.wlOverlay.hidden = true; }
+  });
+
+  // 編集の設定（設定メニューから開く。切り替えたらすぐ効くので保存ボタンは無い）
+  el.edSkipConfirm.addEventListener("change", () => applyDeleteConfirmPref(el.edSkipConfirm.checked));
+  el.btnEdClose.addEventListener("click", () => { el.edOverlay.hidden = true; });
+  el.edOverlay.addEventListener("click", (e) => { if (e.target === el.edOverlay) el.edOverlay.hidden = true; });
+  el.edOverlay.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); el.edOverlay.hidden = true; }
   });
 
   el.btnHelp.addEventListener("click", () => { el.helpOverlay.hidden = false; });
