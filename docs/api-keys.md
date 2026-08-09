@@ -447,7 +447,7 @@ Deepgram / AssemblyAI は**使った分だけ課金される**ので、放置す
 |---|---|
 | `Cannot access gated repo for pyannote/speaker-diarization-3.1` | 手順 2 の同意をしていない。両方のページで同意する |
 | 同意済みなのに `401` / `403` | Fine-grained トークンで `Read access to contents of all public gated repos` を入れ忘れている。Read タイプで作り直すのが早い |
-| `use_auth_token got an unexpected keyword argument` | トークンではなくライブラリの問題。`huggingface_hub<1.0` に固定が必要（`manual.md` 参照）|
+| `use_auth_token got an unexpected keyword argument` | トークンではなくライブラリの問題。`huggingface_hub<1.0` に固定が必要（[`transcribe.md`](transcribe.md) 参照）|
 | `DEEPGRAM_API_KEY が設定されていません` | `export` したのと同じシェルで実行しているか。Windows は `setx` 後にウィンドウを開き直す |
 | Gemini が `HTTP 404: no longer available` | モデル名が古い。`bench/gemini_models.py` で使えるものを確認する |
 | Deepgram が `HTTP 400` | そのモデルが `language=ja` と `diarize` の両方に対応しているか。`--dg-model nova-2` も試す |

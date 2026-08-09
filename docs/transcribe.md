@@ -1,7 +1,8 @@
 # 文字起こし マニュアル
 
 > このドキュメントは **Traccia** の文字起こし側（`transcribe`）の詳細マニュアルです。
-> ツール全体の説明と字幕エディタの使い方は [`README.md`](README.md) にあります。
+> ツール全体の説明と字幕エディタの使い方は [`README.md`](../README.md) にあります。
+> API キーの取得手順は [`api-keys.md`](api-keys.md) にあります。
 >
 > 本文中の `python transcribe.py ...` は現在も動きます。
 > 新しい書き方は `python -m traccia transcribe ...` で、どちらでも同じです。
@@ -20,7 +21,7 @@
 2. [Intel Mac での実行手順](#intel-mac-での実行手順)
 3. [M1 / M2 Mac（Apple Silicon）での実行手順](#m1--m2-macapple-siliconでの実行手順)
 4. [Windows（CUDA / GPU）でのセットアップ](#windowscuda--gpuでのセットアップ)
-5. [Windows での実行手順](#windowsでの実行手順)
+5. [Windows での実行手順](#windows-での実行手順)
 6. [コマンドオプション一覧](#コマンドオプション一覧)
 7. [出力ファイル](#出力ファイル)
 8. [HuggingFace トークンの準備（話者分離に必要）](#huggingface-トークンの準備話者分離に必要)
@@ -40,8 +41,11 @@
 
 **このマニュアルはローカル実行（無料）についてのもの。**
 Traccia のエディタから **Gemini** に書き起こさせる道もある（有料・1 時間の動画あたり $2 前後）。
-そちらは `README.md` の「エディタから文字起こしする（Gemini・有料）」を参照。
+そちらは [`gemini.md`](gemini.md) を参照。
 Windows へ動画を持っていかずに済むが、費用がかかる。
+
+内部の処理（faster-whisper と pyannote を別プロセスに分けている理由など）は
+[`internals.md`](internals.md#文字起こしの処理の流れ) にある。
 
 ---
 
@@ -203,7 +207,7 @@ tail -f run.log
 > フォルダ構成も異なり（Mac: `.venv/bin/python` ／ Windows: `.venv\Scripts\python.exe`）、
 > 入れるパッケージのバージョンも別物（Mac は torch 固定、Windows は CUDA 版 torch）です。
 >
-> **コピーするのは `transcribe.py` / `manual.md` / `requirements.txt` などのソース一式のみ**で、
+> **コピーするのは `transcribe.py` / `traccia/` / `requirements.txt` などのソース一式のみ**で、
 > `.venv/` は除外し、Windows 側で下記の手順4〜5で**新規に作成**します。
 > モデルキャッシュも不要です（初回実行時に自動ダウンロードされます）。
 
@@ -348,13 +352,32 @@ py -3.13 -m venv .venv          # 3.12 でも可。手順1の py --list で確�
 
 ## 出力ファイル
 
-入力が `sample.mp4` の場合（出力フォルダは入力と同じ）:
+**出力先は入力ファイルと同じ場所の `dest/<ファイル名>/`**（`-o` で変えられる）。
+入力が `sample.mp4` の場合:
+
+```
+sample.mp4
+dest/
+  sample/
+    sample.srt          全体（本文の先頭に「話者A: 」）
+    sample.txt          読み用（同じ話者が続くとまとめる）
+    sample.話者A.srt    話者別（--split-speakers 時）
+    sample.話者B.srt
+    sample.peaks.json   波形
+```
 
 | ファイル | 内容 |
 |---|---|
 | `sample.txt` | 文字起こし全文（話者分離時は `話者A:` ごとにまとめ） |
 | `sample.srt` | 字幕（話者分離時は各行頭に `話者A:` ラベル付き） |
 | `sample.話者A.srt` 等 | `--split-speakers` 時。話者ごとの字幕（番号は1から振り直し） |
+| `sample.peaks.json` | 波形のピーク列。エディタのタイムラインが使う |
+
+`sample.srt` は本文の先頭に `話者A: ` のような**話者プレフィクス**が付く。
+**Traccia のエディタはこの形式を読む。**
+
+この `dest/sample/` に動画を入れて Mac の `resources/` へ置けば、そのまま 1 セットになる
+（→ [素材の置き方](workflow.md#素材の置き方)）。
 
 - 全 `.srt` は先頭（`00:00:00`）と末尾（動画終端）に空テキスト字幕を入れて時間範囲を揃えています。
 - 話者別 `.srt` のタイムスタンプは元動画の時刻のままなので、そのまま動画に重ねられます。

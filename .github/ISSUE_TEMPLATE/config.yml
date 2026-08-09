@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/uribow-lab/traccia/blob/main/README.md
     about: まず README を見てください。セットアップ・操作・画面の説明はここに全部あります。
   - name: 文字起こし側の詳細
-    url: https://github.com/uribow-lab/traccia/blob/main/manual.md
+    url: https://github.com/uribow-lab/traccia/blob/main/docs/transcribe.md
     about: transcribe の引数・処理時間の目安・出力ファイルの一覧。
   - name: API キーの取り方
     url: https://github.com/uribow-lab/traccia/blob/main/docs/api-keys.md
