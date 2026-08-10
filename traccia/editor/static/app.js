@@ -767,11 +767,15 @@ function paintSelection() {
   for (const [id, r] of rowEls) r.classList.toggle("sel", S.sel.has(id));
 }
 
-function revealSelectedRow() {
-  // 絞り込みを切り替えるとリストの中身が入れ替わるが、スクロール位置はそのまま
-  // 残る。150 番目だけを表示させて選び、絞り込みを解いたときに先頭の 1〜20 が
-  // 出て選んだ行が画面外に消えるのはこのため。選択したものが見えている状態を保つ。
-  const cue = selectedCues()[0];
+/** 選択している行が見えるところまでリストを送る。
+ *
+ * cueId を渡すとその行を、渡さなければ選択の先頭を対象にする。
+ * 絞り込みを切り替えるとリストの中身が入れ替わるが、スクロール位置はそのまま
+ * 残る。150 番目だけを表示させて選び、絞り込みを解いたときに先頭の 1〜20 が
+ * 出て選んだ行が画面外に消えるのはこのため。選択したものが見えている状態を保つ。
+ */
+function revealSelectedRow(cueId) {
+  const cue = cueId != null ? S.cues.find(c => c.id === cueId) : selectedCues()[0];
   if (!cue) return;
   const row = rowEls.get(cue.id);
   if (!row || row.classList.contains("hidden")) return;   // 絞り込みで消えた行は追わない
@@ -795,12 +799,32 @@ function selectSpeaker(spk) {
 function selectedCues() {
   return S.cues.filter(c => S.sel.has(c.id));
 }
+/** タイムライン上の矩形に掛かる字幕。レーンの範囲と時間の範囲の両方で絞る。
+ *
+ * 範囲選択のドラッグ（startMarquee）と Shift クリックで同じ判定を使う。
+ * 別々に書くと、同じ範囲を指したのに結果が違う、ということが起きる。
+ * 時間は「少しでも重なれば採る」。端にまたがるブロックを取りこぼさないため。
+ */
+function cuesInBox(laneA, laneB, t0, t1) {
+  const lo = Math.min(laneA, laneB), hi = Math.max(laneA, laneB);
+  const spks = S.speakers.slice(Math.max(0, lo), Math.max(0, hi) + 1);
+  return S.cues.filter(c => spks.includes(c.speaker) && c.end > t0 && c.start < t1);
+}
+
+/** Shift クリック。起点とクリック先を対角線とする矩形で選ぶ。
+ *
+ * 以前は S.cues（時間順）の添字で「間」を採っていたので、話者をまたいで
+ * 挟まったブロックが全部入っていた。A1 から A3 を選んだつもりで、
+ * 間にある B や C まで付いてくる、という状態だった。
+ */
 function selectRange(fromId, toId) {
-  const a = S.cues.findIndex(c => c.id === fromId);
-  const b = S.cues.findIndex(c => c.id === toId);
-  if (a < 0 || b < 0) { select([toId], false); return; }
-  const [lo, hi] = a <= b ? [a, b] : [b, a];
-  select(S.cues.slice(lo, hi + 1).map(c => c.id), false);
+  const a = S.cues.find(c => c.id === fromId);
+  const b = S.cues.find(c => c.id === toId);
+  if (!a || !b) { select([toId], false); return; }
+  const hits = cuesInBox(
+    laneIndex(a.speaker), laneIndex(b.speaker),
+    Math.min(a.start, b.start), Math.max(a.end, b.end));
+  select(hits.map(c => c.id), false);
 }
 
 /**
@@ -819,9 +843,15 @@ function handlePick(id, ev) {
     paintSelection();
     return false;
   }
-  // すでに複数選択の一部なら選択は崩さない（まとめてドラッグできるように）
-  if (!S.sel.has(id)) select([id], false);
+  // すでに複数選択の一部なら選択は崩さない（まとめてドラッグできるように）。
+  // 選んであるものをもう一度押したときは、右のリストをそこへ送る。
+  // 再生ヘッドが乗っていないブロックは、押してもリストの外にあるままで
+  // 本文を直しに行けなかった。Shift / ⌘ のときは呼ばない（範囲を広げている
+  // 最中にリストが飛ぶと追えなくなる）。
+  const already = S.sel.has(id);
+  if (!already) select([id], false);
   S.anchorId = id;
+  if (already) revealSelectedRow(id);
   return true;
 }
 function soleSelected() {
@@ -1534,13 +1564,25 @@ function dragLog(what, info) {
 }
 
 el.__initDrag = () => {
+  // 最下段のレーンより下は .lane の外なので、el.lanes では拾えない。
+  // 見た目はタイムラインの余白なので、レーンの余白と同じに扱う
+  // （クリックで選択解除、ドラッグで範囲選択）。ルーラー・動画・波形には効かせない。
+  el.tlScroll.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || ev.altKey) return;    // 表示位置の移動に譲る
+    if (ev.target.closest(".lane") || ev.target.closest(".ruler")
+        || ev.target.closest(".track")) return;  // それぞれの担当に任せる
+    const lanesBox = el.lanes.getBoundingClientRect();
+    if (ev.clientY <= lanesBox.bottom) return;   // レーンより上は対象外
+    startMarquee(ev);
+  });
+
   el.lanes.addEventListener("pointerdown", (ev) => {
     const cueEl = ev.target.closest(".cue");
     const laneEl = ev.target.closest(".lane");
     if (!laneEl || ev.button !== 0) return;      // 右・中ボタンは表示位置の移動（initPan）
     if (ev.altKey && !cueEl) return;             // Alt+左ドラッグ（余白）も表示位置の移動
 
-    if (!cueEl) { startMarquee(ev, laneEl); return; }
+    if (!cueEl) { startMarquee(ev); return; }
 
     const id = +cueEl.dataset.id;
     const c = S.cues.find(x => x.id === id);
@@ -1553,10 +1595,18 @@ el.__initDrag = () => {
       : "move";
 
     const group = mode === "move" ? selectedCues() : [c];
+    const orig = group.map(g => ({
+      c: g, start: g.start, end: g.end, speaker: g.speaker, lane: laneIndex(g.speaker),
+    }));
     drag = {
       mode, grabbed: c, moved: false,
       x0: ev.clientX, y0: ev.clientY,
-      orig: group.map(g => ({ c: g, start: g.start, end: g.end, speaker: g.speaker })),
+      orig,
+      // 縦方向は「掴んだものが何段動いたか」を全体に足す。そのための基準と、
+      // はみ出しを止めるための上下端。
+      grabbedLane: laneIndex(c.speaker),
+      laneLo: Math.min(...orig.map(o => o.lane)),
+      laneHi: Math.max(...orig.map(o => o.lane)),
       snaps: snapTargets(new Set(group.map(g => g.id))),
       blockEdges: otherBlockEdges(new Set(group.map(g => g.id))),
       snapOn: el.chkSnap.checked,
@@ -1646,15 +1696,24 @@ el.__initDrag = () => {
       for (const o of drag.orig) { lo = Math.min(lo, o.start); hi = Math.max(hi, o.end); }
       dt = Math.max(-lo, Math.min(dt, S.duration - hi));
 
-      // 縦方向 → 話者変更
+      // 縦方向 → 話者変更。
+      // 掴んだブロックが何段動いたかを、選択したもの全部に同じだけ足す。
+      // 「ポインタのある 1 段」にそろえると、複数の段にまたがる選択が 1 段に潰れる。
       const laneIdx = Math.floor((ev.clientY - drag.laneTop) / drag.laneH);
-      const target = S.speakers[Math.max(0, Math.min(S.speakers.length - 1, laneIdx))];
-      for (const lane of el.lanes.children) lane.classList.toggle("drop", lane.dataset.spk === target);
+      const last = S.speakers.length - 1;
+      let dLane = Math.max(0, Math.min(last, laneIdx)) - drag.grabbedLane;
+      // どれかが段からはみ出す手前で、全体を止める。時間方向の dt と同じ考え方で、
+      // こうしないと行き場を失ったものが端の段に貼り付いて段差が崩れる。
+      dLane = Math.max(-drag.laneLo, Math.min(dLane, last - drag.laneHi));
+
+      const dropSpks = new Set(drag.orig.map(o => S.speakers[o.lane + dLane]));
+      for (const lane of el.lanes.children) lane.classList.toggle("drop", dropSpks.has(lane.dataset.spk));
 
       for (const o of drag.orig) {
         o.c.start = o.start + dt;
         o.c.end = o.end + dt;
-        if (target && target !== o.c.speaker) o.c.speaker = target;
+        const spk = S.speakers[o.lane + dLane];
+        if (spk && spk !== o.c.speaker) o.c.speaker = spk;
       }
     } else {
       const o = drag.orig[0];
@@ -1732,32 +1791,75 @@ el.__initDrag = () => {
 };
 
 /* ---------- 空きレーンのドラッグ = 範囲選択 ---------- */
-function startMarquee(ev, laneEl) {
+
+// 端からこの距離に入ったら表示を送り始める
+const EDGE_PX = 44;
+// 端に張り付いたときの速さ（px/秒相当）。深く入るほどこれに近づく
+const EDGE_SPEED = 900;
+
+function startMarquee(ev) {
   const box = el.tlScroll.getBoundingClientRect();
+  // 起点は px ではなく**秒**で持つ。端で表示範囲を送ると、同じ px が別の時刻を
+  // 指すようになるため。px のまま持つと、送った瞬間に矩形が飛ぶ。
+  const tAnchor = pxToT(ev.clientX - box.left);
   const x0 = ev.clientX, y0 = ev.clientY;
-  let moved = false;
+  let moved = false, cur = ev, raf = 0, lastTs = 0;
   const m = el.marquee;
+
+  const paint = () => {
+    const xa = box.left + tToPx(tAnchor);
+    const xb = Math.max(box.left, Math.min(box.right, cur.clientX));
+    const l = Math.min(xa, xb) - box.left, r = Math.max(xa, xb) - box.left;
+    const t = Math.min(y0, cur.clientY) - box.top, b = Math.max(y0, cur.clientY) - box.top;
+    m.style.left = l + "px"; m.style.top = t + "px";
+    m.style.width = (r - l) + "px"; m.style.height = (b - t) + "px";
+
+    const lanesBox = el.lanes.getBoundingClientRect();
+    const laneH = el.lanes.children[0] ? el.lanes.children[0].offsetHeight : 34;
+    const li0 = Math.floor((Math.min(y0, cur.clientY) - lanesBox.top) / laneH);
+    const li1 = Math.floor((Math.max(y0, cur.clientY) - lanesBox.top) / laneH);
+    select(cuesInBox(li0, li1, pxToT(l), pxToT(r)).map(c => c.id), false);
+  };
+
+  /** 端に寄せている間、表示範囲を送り続ける。送るたびに選択を取り直す。 */
+  const step = (ts) => {
+    raf = 0;
+    if (!moved) return;
+    const ms = lastTs ? Math.min(50, ts - lastTs) : 16;   // タブ復帰時に飛ばない程度に抑える
+    lastTs = ts;
+
+    let dir = 0, depth = 0;
+    if (cur.clientX < box.left + EDGE_PX) {
+      dir = -1; depth = (box.left + EDGE_PX - cur.clientX) / EDGE_PX;
+    } else if (cur.clientX > box.right - EDGE_PX) {
+      dir = 1; depth = (cur.clientX - (box.right - EDGE_PX)) / EDGE_PX;
+    }
+    if (dir) {
+      const span = S.view.t1 - S.view.t0;
+      const move = dir * EDGE_SPEED * Math.min(1, depth) * (ms / 1000) / scale();
+      const t0 = Math.max(0, Math.min(Math.max(0, S.duration - span), S.view.t0 + move));
+      if (t0 !== S.view.t0) { setView(t0, t0 + span); paint(); }
+      // 端まで送り切ったら止まる（t0 が動かなくなるので次のフレームで何もしない）
+    } else {
+      lastTs = 0;
+      return;   // 端から離れたら回すのをやめる。次に端へ入ったら onMove が起こす
+    }
+    raf = requestAnimationFrame(step);
+  };
 
   const onMove = (e) => {
     if (!moved && Math.abs(e.clientX - x0) < 3 && Math.abs(e.clientY - y0) < 3) return;
     moved = true;
     m.hidden = false;
-    const l = Math.min(x0, e.clientX) - box.left, r = Math.max(x0, e.clientX) - box.left;
-    const t = Math.min(y0, e.clientY) - box.top, b = Math.max(y0, e.clientY) - box.top;
-    m.style.left = l + "px"; m.style.top = t + "px";
-    m.style.width = (r - l) + "px"; m.style.height = (b - t) + "px";
-
-    const ta = pxToT(l), tb = pxToT(r);
-    const lanesBox = el.lanes.getBoundingClientRect();
-    const laneH = el.lanes.children[0] ? el.lanes.children[0].offsetHeight : 34;
-    const li0 = Math.floor((Math.min(y0, e.clientY) - lanesBox.top) / laneH);
-    const li1 = Math.floor((Math.max(y0, e.clientY) - lanesBox.top) / laneH);
-    const spks = S.speakers.slice(Math.max(0, li0), Math.max(0, li1) + 1);
-    select(S.cues.filter(c => spks.includes(c.speaker) && c.end > ta && c.start < tb).map(c => c.id), false);
+    cur = e;
+    paint();
+    const nearEdge = e.clientX < box.left + EDGE_PX || e.clientX > box.right - EDGE_PX;
+    if (nearEdge && !raf) { lastTs = 0; raf = requestAnimationFrame(step); }
   };
   const onUp = () => {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
     m.hidden = true;
     // 空きをクリックしただけなら選択を外すだけ。再生ヘッドはルーラーからしか動かさない。
     if (!moved) { S.sel.clear(); paintSelection(); }
@@ -2783,16 +2885,28 @@ function initEvents() {
   };
   el.ruler.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || e.altKey) return;   // 右ドラッグ / Alt+左は表示位置の移動に譲る
-    el.video.pause();
+    // 再生ヘッドを動かしただけで再生を止めない。止めるのは停止を押したときだけ。
+    // ただし掴んで動かしている間は別で、再生とシークが競合して位置がずれ音も飛ぶので
+    // そこだけ止めて、離したときに元が再生中なら戻す。
+    const wasPlaying = !el.video.paused;
     rulerSeek(e);
     el.ruler.setPointerCapture(e.pointerId);
-    const move = (ev) => rulerSeek(ev);
+    const move = (ev) => {
+      // 1 回のクリックでは止めない（pause→play を挟まないぶん音が途切れない）。
+      // 動かし始めて初めて止める。
+      if (wasPlaying && !el.video.paused) el.video.pause();
+      rulerSeek(ev);
+    };
     const up = () => {
       el.ruler.removeEventListener("pointermove", move);
       el.ruler.removeEventListener("pointerup", up);
+      el.ruler.removeEventListener("pointercancel", up);
+      // 押した時点で止まっていたなら、離しても再生しない
+      if (wasPlaying && el.video.paused) el.video.play().catch(() => {});
     };
     el.ruler.addEventListener("pointermove", move);
     el.ruler.addEventListener("pointerup", up);
+    el.ruler.addEventListener("pointercancel", up);
   });
 
   // ホイール:

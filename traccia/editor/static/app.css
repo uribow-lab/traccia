@@ -16,6 +16,9 @@
   --accent:#2FBFA8;
   --accent-ink:#062421;
   --warn:#E0A93F;
+  /* 選択中。再生ヘッド（緑）と印（黄）のどちらとも混ざらない水色にする。
+     話者色は流用しない。話者の色分けと取り違えるため。 */
+  --sel:#5AA9E6;
   --bad:#E4685D;
   --guide:#FFE066;   /* スナップガイドの縦線 */
 
@@ -372,9 +375,14 @@ body.drag-edge *{cursor:ew-resize!important;user-select:none;}
   padding:6px 10px;border-bottom:1px solid var(--line-soft);cursor:pointer;
 }
 .row:hover{background:#131F24;}
-.row.sel{background:#182A2E;}
+/* 行の状態は先頭のバーの色で見分ける。
+     選択     = 水色 --sel   / 再生ヘッド = 緑 --accent / 印 = 黄 --warn
+   選択と再生ヘッドが重なったときは、外 3px を水色・内 3px を緑の 2 本にして
+   「選ばれていて、かつ再生ヘッドが乗っている」を 1 目で出す。 */
+.row.sel{background:#152430;box-shadow:inset 3px 0 0 var(--sel);}
 .row.cur{background:#12262A;box-shadow:inset 3px 0 0 var(--accent);}
-.row.sel.cur{background:#1A3034;}
+/* 先に書いたものが上に載る。3px の水色が 6px の緑を隠して、外 3px＋内 3px に見える */
+.row.sel.cur{background:#17303A;box-shadow:inset 3px 0 0 var(--sel),inset 6px 0 0 var(--accent);}
 .row.hidden{display:none;}
 
 /* 番号は目印の切り替えボタンも兼ねる。見た目は今までどおり数字だけ。 */
@@ -395,8 +403,11 @@ body.drag-edge *{cursor:ew-resize!important;user-select:none;}
 /* 目印が付いた行。選択中・再生位置とは別の色にして紛れないようにする */
 .row.marked{background:#231D12;box-shadow:inset 3px 0 0 var(--warn);}
 .row.marked:hover{background:#2B2416;}
-.row.marked.sel{background:#2A2718;}
+/* 印は今までどおり黄のバー。選択が重なったら外側に水色を足して、
+   印であることを消さずに選択中も分かるようにする。 */
+.row.marked.sel{background:#2A2718;box-shadow:inset 3px 0 0 var(--sel),inset 6px 0 0 var(--warn);}
 .row.marked.cur{background:#26261A;box-shadow:inset 3px 0 0 var(--warn),inset 0 0 0 1px rgba(47,191,168,.35);}
+.row.marked.sel.cur{background:#2A2A1E;box-shadow:inset 3px 0 0 var(--sel),inset 6px 0 0 var(--warn),inset 0 0 0 1px rgba(47,191,168,.35);}
 .row.marked .idx{color:var(--warn);}
 .row.marked .idx .mk{background:var(--warn);border-color:var(--warn);}
 
