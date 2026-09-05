@@ -11,6 +11,7 @@
 <!-- ============ トップバー ============ -->
 <header class="topbar">
   <div class="brand" title="Traccia — なぞった跡 / 音声トラック（伊）">Traccia</div>
+  <span class="ver" title="いま動いている版">v{{VERSION}}</span>
 
   <label class="field">
     <span class="lb">セット</span>
@@ -23,6 +24,8 @@
 
   <div class="hint" id="statusMsg"></div>
   <button class="btn" id="btnTranscribe" title="このセットを Gemini で文字起こしする">文字起こし</button>
+  <button class="btn" id="btnWfp" title="Filmora のプロジェクトから最終版を取り込む">wfp から取り込む</button>
+  <button class="btn" id="btnCompare" title="残っている版どうしの差分を別タブで見る">差分を見る</button>
   <button class="btn" id="btnUndo" title="元に戻す (⌘Z)">元に戻す</button>
   <button class="btn" id="btnRedo" title="やり直し (⇧⌘Z)">やり直し</button>
   <button class="btn" id="btnSave" title="保存 (⌘S)">保存</button>
@@ -245,6 +248,21 @@
         <span class="hint">レーンの並びは上から順です。「不明」は常に最後になります。</span>
       </div>
 
+      <h3 class="sheet-sec">残っている版</h3>
+      <p class="sheet-lede">
+        いま編集しているのは <code>edit.json</code> です。それとは別に、
+        <b>性質のちがう版</b>を残しています。あとで
+        「文字起こしがどこを間違えたか」を突き合わせるための材料です。
+      </p>
+      <div class="gen-list" id="genList"></div>
+      <div class="gen-act">
+        <button class="btn" id="btnMarkManual">いまの状態を手作業の確定版にする</button>
+        <span class="hint">
+          wfp を取り込むと <code>edit.json</code> は差し替わります。その直前に手作業版を
+          自動で退避しますが、<b>やり直したいとき</b>はここから置き直せます。
+        </span>
+      </div>
+
       <h3 class="sheet-sec">この動画に出てくる固有名詞</h3>
       <p class="sheet-lede">
         店名・地名・商品名・人名など、<b>耳慣れないので化けやすい語</b>を 1 行に 1 つ書きます。
@@ -355,23 +373,108 @@
   </div>
 </div>
 
+<!-- ============ wfp から取り込む ============ -->
+<div class="overlay" id="wfpOverlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>wfp から取り込む</h2>
+      <button class="btn ghost" id="btnWfpClose">閉じる</button>
+    </div>
+    <div class="sheet-body">
+      <p class="sheet-lede">
+        Filmora で尺・文言・話者を直したあと、その<b>最終版</b>を取り戻します。
+        動画を書き出したあとでも、プロジェクトファイル（<code>.wfp</code>）が残っていれば取れます。
+      </p>
+
+      <label class="cfg-f">
+        <span class="cfg-lbl">取り込む .wfp</span>
+        <select id="wfpFile" class="inp"></select>
+        <span class="hint" id="wfpFileHint">セットフォルダに置いた <code>.wfp</code> を新しい順に並べます。</span>
+      </label>
+
+      <div id="wfpPreview" hidden>
+        <h3 class="sheet-sec">取り込む中身</h3>
+        <table class="tr-facts">
+          <tr><th>プロジェクト</th><td id="wfpName">—</td></tr>
+          <tr class="big"><th>取り込む件数</th><td id="wfpCount">—</td></tr>
+          <tr><th>いまの字幕</th><td id="wfpNow">—</td></tr>
+          <tr><th>手作業版の退避</th><td id="wfpKeep">—</td></tr>
+        </table>
+
+        <div id="wfpWarn"></div>
+
+        <h3 class="sheet-sec">話者の対応付け</h3>
+        <p class="sheet-lede">
+          Filmora 側に話者という概念は無く、<b>本文の縁の色</b>で束ねています。
+          こちらの話者色と一致したものは自動で当てました。
+          <b>「件数の多い順」と出ているものは当て推量</b>なので確かめてください。
+        </p>
+        <div class="wfp-map" id="wfpMap"></div>
+
+        <div id="wfpExcluded"></div>
+
+        <p class="sheet-lede">
+          取り込むと<b>いまの字幕はすべて置き換わります</b>。
+          直前の <code>edit.json</code> は <code>backup/</code> に退避するので戻せますが、
+          <b>⌘Z では戻りません</b>。元の .srt には触りません。
+        </p>
+      </div>
+
+      <p class="warn-hint" id="wfpMsg"></p>
+    </div>
+    <div class="sheet-foot">
+      <span class="hint" id="wfpFoot"></span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnWfpCancel">閉じる</button>
+      <button class="btn pri" id="btnWfpGo" disabled>取り込む</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ 文字起こしの実行 ============ -->
 <div class="overlay" id="trOverlay" hidden>
   <div class="sheet sheet-sm">
     <div class="sheet-head">
-      <h2 id="trTitle">Gemini で文字起こし</h2>
+      <h2 id="trTitle">文字起こし</h2>
       <button class="btn ghost" id="btnTrClose">閉じる</button>
     </div>
 
     <div class="sheet-body">
       <!-- 実行前 -->
       <div id="trConfirm">
+        <p class="sheet-lede">
+          <b>本文は Gemini、時刻はローカル</b>が得意です。両方を使うと、
+          どちらか一方より正しい位置に、多くの発話が並びます。
+        </p>
+
+        <div class="tr-pick" id="trPick">
+          <label class="tr-pick-row">
+            <input type="checkbox" id="trUseGemini" checked>
+            <span class="tr-pick-name">Gemini <em>本文と話者</em></span>
+            <span class="tr-pick-cost" id="trPickGeminiCost">—</span>
+          </label>
+          <label class="tr-pick-row">
+            <input type="checkbox" class="trLocal" value="small" checked>
+            <span class="tr-pick-name">ローカル small <em>時刻が細かい</em></span>
+            <span class="tr-pick-cost" id="trPickSmall">—</span>
+          </label>
+          <label class="tr-pick-row">
+            <input type="checkbox" class="trLocal" value="medium" checked>
+            <span class="tr-pick-name">ローカル medium <em>拾う数が多い</em></span>
+            <span class="tr-pick-cost" id="trPickMedium">—</span>
+          </label>
+          <p class="hint" id="trLocalHint" hidden>
+            ローカル文字起こしが使えません（faster-whisper が入っていない）。
+          </p>
+        </div>
+
         <table class="tr-facts">
           <tr><th>セット</th><td id="trSet">—</td></tr>
           <tr><th>動画の長さ</th><td id="trDur">—</td></tr>
           <tr><th>送る回数</th><td id="trChunks">—</td></tr>
           <tr><th>モデル</th><td id="trModel">—</td></tr>
           <tr class="big"><th>想定費用</th><td id="trCost">—</td></tr>
+          <tr class="big"><th>かかる時間</th><td id="trTime">—</td></tr>
           <tr><th>今月ここまで</th><td id="trMonth">—</td></tr>
         </table>
 
@@ -396,6 +499,8 @@
       <div id="trRun" hidden>
         <div class="tr-bar"><div class="tr-bar-fill" id="trBarFill"></div></div>
         <p class="tr-msg" id="trMsg">準備しています…</p>
+        <div class="tr-engines" id="trEngines"></div>
+        <div class="tr-notes" id="trNotes"></div>
         <table class="tr-facts">
           <tr><th>経過</th><td id="trElapsed">0 秒</td></tr>
           <tr><th>ここまでの実測</th><td id="trSpent">$0.0000</td></tr>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>差分を見る — Traccia</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="cmp-body">
+
+<header class="cmp-head">
+  <div class="cmp-head-l">
+    <h1 id="cmpSet">—</h1>
+    <div class="cmp-pick">
+      <label>左（比べる側）
+        <select id="cmpLeft" class="inp"></select>
+      </label>
+      <span class="cmp-arrow">↔</span>
+      <label>右（正とする側）
+        <select id="cmpRight" class="inp"></select>
+      </label>
+    </div>
+  </div>
+  <div class="cmp-head-r">
+    <audio id="cmpAudio" preload="none"></audio>
+    <span class="hint" id="cmpPlaying">行をクリックすると、その位置から音が出ます</span>
+  </div>
+</header>
+
+<section class="cmp-sum" id="cmpSum"></section>
+<div class="cmp-shift" id="cmpShift" hidden></div>
+
+<nav class="cmp-filters" id="cmpFilters"></nav>
+<div class="cmp-count" id="cmpCount"></div>
+
+<div class="cmp-table-wrap">
+  <table class="cmp-table">
+    <thead>
+      <tr>
+        <th class="cmp-th-kind">種類</th>
+        <th class="cmp-th-time">時刻</th>
+        <th id="cmpThL">左</th>
+        <th class="cmp-th-d">差</th>
+        <th id="cmpThR">右</th>
+      </tr>
+    </thead>
+    <tbody id="cmpRows"></tbody>
+  </table>
+</div>
+
+<p class="cmp-msg" id="cmpMsg"></p>
+
+<section class="sug" id="sug" hidden>
+  <h2>この差分から分かること</h2>
+  <p class="sug-lede">
+    人が直し終えた版から、<b>この現場の字幕の作り方</b>を測りました。
+    文字起こしのプロンプトに入れる目安を、実測に合わせられます。
+    <b>チェックしたものだけ</b>が反映されます。
+  </p>
+  <div class="sug-now" id="sugNow"></div>
+  <div class="sug-list" id="sugList"></div>
+  <div class="sug-act">
+    <button class="btn pri" id="sugApply" disabled>チェックしたものを反映</button>
+    <button class="btn" id="sugUndo" hidden>1 つ前に戻す</button>
+    <span class="hint" id="sugMsg"></span>
+  </div>
+</section>
+
+<script src="/static/compare.js"></script>
+</body>
+</html>

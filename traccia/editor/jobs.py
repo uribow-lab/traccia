@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from .. import config, gemini, usage
+from .. import config, gemini, local_asr, merge as merge_mod, style as style_mod, usage
 from . import project
 from .project import SetPaths
 
@@ -38,6 +38,10 @@ class Job:
         self.error = ""
         self.result: dict | None = None
         self.imported = 0
+        # 系統ごとの進み具合。{"gemini": {...}, "small": {...}, "medium": {...}}
+        self.engines: dict[str, dict] = {}
+        self.merged: dict | None = None
+        self.notes: list[str] = []       # 警告（暴走・はみ出しなど）
         self.started = time.time()
         self.finished: float | None = None
         self._cancel = threading.Event()
@@ -65,6 +69,9 @@ class Job:
             "estimate": self.estimate,
             "error": self.error,
             "imported": self.imported,
+            "engines": self.engines,
+            "merged": self.merged,
+            "notes": self.notes,
             "elapsed": round((self.finished or time.time()) - self.started, 1),
             "startedAt": self.started,
             "finishedAt": self.finished,
@@ -131,6 +138,22 @@ class Runner:
 RUNNER = Runner()
 
 
+def _set_engine(job: Job, name: str, **kw) -> None:
+    """系統ごとの進み具合を更新する。画面はこれを 1 行ずつ出す。"""
+    cur = job.engines.setdefault(name, {"name": name, "status": "waiting",
+                                        "at": 0.0, "duration": 0.0, "message": ""})
+    cur.update(kw)
+
+
+def _eta(cur: dict) -> float | None:
+    """残り時間の目安。無音は速く会話が詰まった所は遅いので、平均で均す。"""
+    at, dur, started = cur.get("at") or 0, cur.get("duration") or 0, cur.get("startedAt")
+    if not (at > 0 and dur > 0 and started):
+        return None
+    spent = time.time() - started
+    return max(0.0, spent / at * (dur - at))
+
+
 # ---------------------------------------------------------------- 文字起こし
 
 def _guard(duration: float) -> tuple[str, dict, dict]:
@@ -180,14 +203,65 @@ def estimate_for(paths: SetPaths) -> dict:
     }
 
 
-def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Job:
-    """文字起こしを開始する。lock は保存とぶつからないようにするためのもの。"""
+def plan(paths: SetPaths, options: dict) -> dict:
+    """選んだ組み合わせでの想定費用と所要時間。実行前の確認画面に出す。
+
+    Gemini は課金されるので額を、ローカルは無料だが時間がかかるので分を出す。
+    """
+    cfg = config.load()["gemini"]
     info = project.probe(paths.video)
     duration = info.duration
     if not duration:
         raise JobError("動画の長さを読み取れませんでした（PyAV が必要です）")
 
-    key, cfg, est = _guard(duration)
+    use_gemini = options.get("gemini", True)
+    models = list(options.get("localModels") or [])
+
+    est = gemini.estimate(duration, cfg["model"], cfg["chunkSec"])
+    cost = est["cost"] if use_gemini else 0.0
+
+    # Gemini は通信待ち、ローカルは CPU 待ちなので重ねられる。ローカル同士は
+    # 取り合うので足し合わせる（実装時の実測に合わせて見直す）。
+    local_sec = sum(local_asr.estimate_sec(duration, m) for m in models)
+    gem_sec = duration * 0.19 if use_gemini else 0.0     # 実測 1737 秒 → 338 秒
+    return {
+        **est,
+        "cost": round(cost, 4),
+        "useGemini": use_gemini,
+        "localModels": models,
+        "localAvailable": local_asr.available(),
+        "localChoices": local_asr.MODEL_CHOICES,
+        "geminiSec": round(gem_sec),
+        "localSec": round(local_sec),
+        "totalSec": round(max(gem_sec, 0) + local_sec if models else gem_sec),
+        "monthCost": round(usage.month_cost(), 5),
+        "monthlyLimitUsd": cfg["monthlyLimitUsd"],
+    }
+
+
+def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Job:
+    """文字起こしを開始する。lock は保存とぶつからないようにするためのもの。
+
+    Gemini（本文と話者）とローカル（時刻）を並行して回し、最後に合成する。
+    どれを使うかは実行前の画面で選ぶ。Gemini を外してローカルだけでも作れる。
+    """
+    info = project.probe(paths.video)
+    duration = info.duration
+    if not duration:
+        raise JobError("動画の長さを読み取れませんでした（PyAV が必要です）")
+
+    use_gemini = bool(options.get("gemini", True))
+    models = [m for m in (options.get("localModels") or [])
+              if m in {c["id"] for c in local_asr.MODEL_CHOICES}]
+    if not use_gemini and not models:
+        raise JobError("Gemini とローカルのどちらも選ばれていません")
+    if models and not local_asr.available():
+        raise JobError("ローカル文字起こしが使えません"
+                       "（faster-whisper が入っていない）")
+
+    key, cfg, est = ("", config.load()["gemini"], {"chunks": 0, "cost": 0.0})
+    if use_gemini:
+        key, cfg, est = _guard(duration)
 
     vocab = project.load_vocab(paths)
     terms = vocab["terms"]
@@ -204,75 +278,170 @@ def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Jo
     except (TypeError, ValueError):
         num_speakers = None
 
-    def work(job: Job) -> None:
-        def on_progress(p: dict) -> None:
-            job.phase = p.get("phase") or job.phase
-            job.message = p.get("message") or job.message
-            if p.get("chunk"):
-                job.chunk = int(p["chunk"])
-            if p.get("chunks"):
-                job.chunks = int(p["chunks"])
-            if p.get("cost") is not None:
-                job.cost = float(p["cost"])
+    # このセットの確定版から測った作法を、プロンプトに差し込む（TRAC-24）。
+    # 測れなければ同じ場所の他セットの中央値、それも無ければ既定値。
+    sty = style_mod.effective(paths.root, paths.stem, paths.root.parent)
+    style_lines = style_mod.prompt_lines(sty)
 
-        partial = None
-        try:
-            res = gemini.transcribe(
-                paths.video, key=key, model=cfg["model"], chunk_sec=cfg["chunkSec"],
-                terms=terms, note=note, speakers=named or None,
-                num_speakers=num_speakers,
-                peaks_out=None if paths.waveform_file.exists() else paths.waveform_file,
-                progress=on_progress, cancel=job.cancelled)
-        except gemini.CancelledWithUsage as e:
-            partial = e.result
-            job.status = "cancelled"
-        except gemini.Cancelled:
+    def work(job: Job) -> None:
+        job.phase = "audio"
+        job.message = "音声を取り出しています…"
+        for name in (["gemini"] if use_gemini else []) + models:
+            _set_engine(job, name, status="waiting", duration=duration)
+
+        # 音声のデコードは 1 回だけ。2.2GB の素材で 21 秒かかるので、
+        # Gemini とローカルで読み直さない。
+        samples = gemini.load_audio(paths.video)
+        if not paths.waveform_file.exists():
+            job.message = "波形を作っています…"
+            gemini.write_peaks(samples, paths.waveform_file)
+
+        results: dict[str, object] = {}
+        errors: dict[str, str] = {}
+
+        def run_gemini() -> None:
+            _set_engine(job, "gemini", status="running", startedAt=time.time())
+
+            def on_progress(p: dict) -> None:
+                if p.get("chunk"):
+                    job.chunk = int(p["chunk"])
+                if p.get("chunks"):
+                    job.chunks = int(p["chunks"])
+                if p.get("cost") is not None:
+                    job.cost = float(p["cost"])
+                # はみ出しの警告は、終わったあとに overruns からまとめて出す。
+                # ここでも積むと「8 本目は…」と「Gemini 8 本目は…」が二重に並ぶ。
+                msg = p.get("message") or ""
+                _set_engine(job, "gemini", message=msg,
+                            at=(job.chunk / job.chunks * duration) if job.chunks else 0.0,
+                            cost=job.cost)
+
+            try:
+                res = gemini.transcribe(
+                    paths.video, key=key, model=cfg["model"],
+                    chunk_sec=cfg["chunkSec"], terms=terms, note=note,
+                    speakers=named or None, num_speakers=num_speakers,
+                    peaks_out=None, style=style_lines,
+                    progress=on_progress, cancel=job.cancelled)
+                results["gemini"] = res
+                # 途中経過で入れた額を、確定した額で置き直す。しないと系統の行と
+                # 下の「ここまでの実測」が食い違ったまま残る
+                job.cost = float(res["usage"]["cost"])
+                _set_engine(job, "gemini", status="done", at=duration,
+                            cost=job.cost,
+                            message=f"{len(res['segments'])} 件 / ${job.cost:.4f}")
+            except gemini.CancelledWithUsage as e:
+                results["gemini"] = e.result
+                _set_engine(job, "gemini", status="cancelled")
+            except gemini.Cancelled:
+                _set_engine(job, "gemini", status="cancelled")
+            except gemini.GeminiError as e:
+                errors["gemini"] = str(e)
+                _set_engine(job, "gemini", status="error", message=str(e))
+
+        def run_local(model: str) -> None:
+            _set_engine(job, model, status="running", startedAt=time.time())
+
+            def on_progress(p: dict) -> None:
+                _set_engine(job, model, at=float(p.get("at") or 0.0),
+                            duration=float(p.get("duration") or duration),
+                            count=int(p.get("count") or 0),
+                            message=p.get("message") or "")
+
+            try:
+                res = local_asr.transcribe(
+                    samples, model=model, terms=terms, note=note,
+                    progress=on_progress, cancel=job.cancelled)
+                results[model] = res
+                if res.warning and res.warning not in job.notes:
+                    job.notes.append(f"{model}: {res.warning}")
+                _set_engine(job, model, status="done", at=duration,
+                            message=f"{len(res.segments)} 件 / {res.elapsed:.0f} 秒")
+            except local_asr.Cancelled:
+                _set_engine(job, model, status="cancelled")
+            except local_asr.LocalError as e:
+                errors[model] = str(e)
+                _set_engine(job, model, status="error", message=str(e))
+
+        job.phase = "transcribe"
+        job.message = "文字起こし中…"
+        threads = []
+        if use_gemini:
+            threads.append(threading.Thread(target=run_gemini, daemon=True))
+        # ローカル同士は CPU を取り合うので順番に回す。1 本のスレッドで直列に。
+        if models:
+            def run_locals() -> None:
+                for m in models:
+                    if job.cancelled():
+                        _set_engine(job, m, status="cancelled")
+                        continue
+                    run_local(m)
+            threads.append(threading.Thread(target=run_locals, daemon=True))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        if job.cancelled() and not results:
             job.status = "cancelled"
             job.message = "中止しました"
             return
-        except gemini.GeminiError as e:
+        if not results:
             job.status = "error"
-            job.error = str(e)
+            job.error = " / ".join(f"{k}: {v}" for k, v in errors.items()) or "結果がありません"
             job.message = "失敗しました"
             return
-        else:
-            partial = res
-            job.status = "done"
 
-        job.result = {k: v for k, v in partial.items() if k != "segments"}
-        job.cost = float(partial["usage"]["cost"])
+        # 使った額は、途中で止めても必ず残す
+        gem = results.get("gemini")
+        if gem:
+            job.cost = float(gem["usage"]["cost"])
+            usage.record({
+                "set": paths.name, "video": paths.video.name, "engine": "gemini",
+                "model": gem["model"], "durationSec": gem["duration"],
+                "chunks": gem["chunks"], "chunksDone": gem["chunksDone"],
+                "elapsed": gem["elapsed"], "status": job.status,
+                **{k: v for k, v in gem["usage"].items() if k != "pricePerMTok"},
+            })
+            for o in gem.get("overruns") or []:
+                msg = (f"Gemini {o['chunk']} 本目は時刻が {o['over']:.0f} 秒はみ出しています"
+                       "（この範囲は時刻がずれている可能性）")
+                if msg not in job.notes:
+                    job.notes.append(msg)
 
-        # 途中で止めても、そこまでの呼び出しには課金されている。必ず残す。
-        usage.record({
-            "set": paths.name,
-            "video": paths.video.name,
-            "engine": "gemini",
-            "model": partial["model"],
-            "durationSec": partial["duration"],
-            "chunks": partial["chunks"],
-            "chunksDone": partial["chunksDone"],
-            "elapsed": partial["elapsed"],
-            "status": job.status,
-            **{k: v for k, v in partial["usage"].items() if k != "pricePerMTok"},
-        })
+        job.phase = "merge"
+        job.message = "突き合わせています…"
+        sources = []
+        if gem:
+            sources.append(merge_mod.Source("gemini", "text", gem["segments"]))
+        for m in models:
+            r = results.get(m)
+            if r:
+                sources.append(merge_mod.Source(m, "time", r.segments))
 
-        segs = partial["segments"]
-        if not segs:
-            if job.status == "done":
-                job.status = "error"
-                job.error = "区間が 1 つも返りませんでした"
+        cues, rep = merge_mod.merge(sources)
+        job.merged = rep.to_dict()
+        job.notes.append(f"区切りの目安 {sty.sec:.1f} 秒・{sty.chars} 文字を使いました"
+                         f"（{sty.from_ or '既定値'}）")
+        job.result = {
+            "duration": round(duration, 3),
+            "engines": {k: (v.to_dict() if hasattr(v, "to_dict")
+                            else {kk: vv for kk, vv in v.items() if kk != "segments"})
+                        for k, v in results.items()},
+            "merge": rep.to_dict(),
+        }
+
+        if not cues:
+            job.status = "error"
+            job.error = "区間が 1 つも返りませんでした"
             job.message = "取り込むものがありませんでした"
             return
 
         with lock:
-            res = project.import_segments(paths, segs)
+            res = project.import_segments(paths, cues)
         job.imported = res["count"]
+        job.status = "cancelled" if job.cancelled() else "done"
+        job.message = f"{res['count']} 件を取り込みました（{merge_mod.summary_text(rep)}）"
 
-        if job.status == "cancelled":
-            job.message = (f"{partial['chunksDone']}/{partial['chunks']} 本目までを"
-                           f"取り込みました（{res['count']} 件 / ${job.cost:.4f}）")
-        else:
-            job.message = (f"{res['count']} 件を取り込みました"
-                           f"（${job.cost:.4f} / {partial['elapsed']:.0f} 秒）")
-
+    est = {**est, "useGemini": use_gemini, "localModels": models}
     return RUNNER.start(paths.name, "transcribe", est, work)

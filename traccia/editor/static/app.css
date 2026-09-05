@@ -106,6 +106,10 @@ button{font-family:inherit;}
   font-weight:600;font-size:14px;letter-spacing:.09em;flex:none;
   color:var(--accent);cursor:default;
 }
+.ver{
+  font-family:var(--font-mono);font-size:10px;color:var(--dim);
+  flex:none;margin-left:-7px;cursor:default;
+}
 .topbar .meta{
   font-family:var(--font-mono);font-size:10.5px;color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38ch;
@@ -787,3 +791,153 @@ body.drag-edge *{cursor:ew-resize!important;user-select:none;}
 .wl-table tr.dim td b{color:var(--dim);font-weight:400;font-family:inherit;}
 
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;}}
+
+/* ---- 文字起こし: 使うものを選ぶ ---- */
+.tr-pick{display:flex;flex-direction:column;gap:2px;margin:10px 0 14px;
+  border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.tr-pick-row{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  background:var(--rail);cursor:pointer;}
+.tr-pick-row:hover{background:var(--panel);}
+.tr-pick-row input{margin:0;}
+.tr-pick-name{flex:1;}
+.tr-pick-name em{font-style:normal;color:var(--dim);font-size:11.5px;margin-left:6px;}
+.tr-pick-cost{font-family:var(--font-mono);font-size:12px;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap;}
+.tr-pick-row.off{opacity:.5;}
+
+/* ---- 文字起こし: 系統ごとの進み具合 ---- */
+.tr-engines{display:flex;flex-direction:column;gap:8px;margin:12px 0;}
+.tr-eng{display:grid;grid-template-columns:74px 1fr auto;align-items:center;gap:10px;
+  font-size:12px;}
+.tr-eng-name{color:var(--muted);}
+/* span なので display を指定しないと width / height が効かない。
+   指定を忘れて、完了してもバーが空のままだった。 */
+.tr-eng-bar{display:block;height:6px;border-radius:3px;background:var(--rail);
+  overflow:hidden;}
+.tr-eng-fill{display:block;height:100%;width:0;background:var(--accent);
+  transition:width .3s;}
+.tr-eng.waiting .tr-eng-fill{background:var(--dim);}
+.tr-eng.error .tr-eng-fill,.tr-eng.cancelled .tr-eng-fill{background:var(--bad);}
+.tr-eng-note{font-family:var(--font-mono);font-size:11px;color:var(--dim);
+  font-variant-numeric:tabular-nums;white-space:nowrap;}
+.tr-notes{display:flex;flex-direction:column;gap:6px;margin:10px 0;}
+.tr-note{font-size:12px;color:var(--warn);border-left:2px solid var(--warn);
+  padding:4px 0 4px 9px;}
+
+/* ---- 残っている版 ---- */
+.gen-list{display:flex;flex-direction:column;gap:1px;margin:10px 0;
+  border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.gen-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;
+  gap:12px;padding:8px 12px;background:var(--rail);font-size:12.5px;}
+.gen-row.now{background:var(--panel);box-shadow:inset 2px 0 0 var(--accent);}
+.gen-row.none{opacity:.5;}
+.gen-name b{font-weight:700;}
+.gen-name span{color:var(--dim);margin-left:8px;font-size:11.5px;}
+.gen-count{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;}
+.gen-when{font-family:var(--font-mono);font-size:11px;color:var(--dim);}
+.gen-act{display:flex;flex-direction:column;gap:6px;margin-bottom:6px;}
+
+/* ---- wfp から取り込む ---- */
+.wfp-map{display:flex;flex-direction:column;gap:1px;margin:10px 0;
+  border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.wfp-row{display:grid;grid-template-columns:16px 1fr auto 150px;align-items:center;
+  gap:10px;padding:8px 12px;background:var(--rail);font-size:12.5px;}
+.wfp-swatch{width:12px;height:12px;border-radius:3px;border:1px solid var(--line);}
+.wfp-who b{font-weight:700;}
+.wfp-who span{color:var(--dim);margin-left:8px;font-size:11.5px;}
+.wfp-why{font-size:11px;color:var(--dim);white-space:nowrap;}
+.wfp-why.guess{color:var(--warn);}
+.wfp-row select{width:100%;font:inherit;font-size:12px;padding:3px 6px;
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:4px;}
+.wfp-ex{margin:10px 0;border-left:2px solid var(--dim);padding:6px 0 6px 10px;}
+.wfp-ex-item{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+
+/* ================= 差分を見る画面（/compare） ================= */
+.cmp-body{padding:0 20px 60px;max-width:1500px;margin:0 auto;}
+.cmp-head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;
+  padding:18px 0 14px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.cmp-head h1{margin:0 0 8px;font-size:17px;font-weight:700;}
+.cmp-pick{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);}
+.cmp-pick label{display:flex;flex-direction:column;gap:3px;}
+.cmp-pick select{font:inherit;font-size:12.5px;padding:4px 8px;background:var(--panel);
+  color:var(--ink);border:1px solid var(--line);border-radius:4px;min-width:190px;}
+.cmp-arrow{color:var(--dim);padding-top:16px;}
+.cmp-head-r{display:flex;flex-direction:column;align-items:flex-end;gap:4px;}
+.cmp-head-r audio{height:30px;}
+
+.cmp-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;margin:16px 0;}
+.cmp-stat{background:var(--rail);border:1px solid var(--line-soft);border-radius:6px;
+  padding:10px 12px;}
+.cmp-stat .k{font-size:11.5px;color:var(--dim);}
+.cmp-stat .v{font-family:var(--font-mono);font-size:20px;font-variant-numeric:tabular-nums;}
+.cmp-stat .d{font-size:11px;color:var(--muted);}
+
+.cmp-shift{background:var(--rail);border-left:3px solid var(--warn);border-radius:4px;
+  padding:9px 12px;margin:0 0 14px;font-size:12.5px;line-height:1.7;}
+
+.cmp-filters{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px;}
+.cmp-filters button{font:inherit;font-size:12px;padding:4px 11px;border-radius:999px;
+  cursor:pointer;background:transparent;color:var(--muted);border:1px solid var(--line);}
+.cmp-filters button:hover{color:var(--ink);border-color:var(--dim);}
+.cmp-filters button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+.cmp-count{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);margin-bottom:8px;}
+
+.cmp-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;}
+.cmp-table{width:100%;border-collapse:collapse;font-size:13px;}
+.cmp-table thead th{position:sticky;top:0;background:var(--panel);color:var(--dim);
+  font-size:11px;font-weight:500;letter-spacing:.06em;text-align:left;
+  padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;z-index:1;}
+.cmp-th-kind{width:120px;} .cmp-th-time{width:60px;} .cmp-th-d{width:74px;}
+.cmp-row{border-bottom:1px solid var(--line-soft);cursor:pointer;}
+.cmp-row:hover{background:var(--rail);}
+.cmp-row td{padding:7px 12px;vertical-align:top;}
+.cmp-time{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);}
+.cmp-d{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;text-align:right;}
+.cmp-d .big{color:var(--bad);font-weight:700;}
+.cmp-side{max-width:420px;}
+.cmp-cue{display:flex;gap:8px;align-items:baseline;}
+.cmp-i{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);min-width:30px;}
+.cmp-spk{font-size:11px;color:var(--muted);min-width:44px;}
+.cmp-spk.diff{color:var(--bad);font-weight:700;}
+.cmp-txt em{font-style:normal;background:rgba(224,169,63,.22);
+  border-bottom:1px solid var(--warn);padding:0 1px;}
+.cmp-none{color:var(--dim);}
+.cmp-bundle{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 38px;
+  font-size:11.5px;color:var(--muted);border-left:2px solid var(--line);padding-left:8px;}
+.cmp-kind{white-space:nowrap;}
+.cmp-skip{display:block;font-size:10px;color:var(--dim);margin-top:2px;}
+.badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;
+  border:1px solid currentColor;}
+.b-一致{color:var(--dim);} .b-時刻{color:var(--sel);} .b-話者{color:var(--bad);}
+.b-語の誤り{color:var(--warn);} .b-表記ゆれ{color:var(--warn);}
+.b-区切り{color:var(--accent);} .b-句読点{color:var(--dim);} .b-削り{color:var(--dim);}
+.b-書き換え{color:var(--bad);} .b-欠落{color:var(--spk-5);} .b-余剰{color:var(--spk-6);}
+.cmp-msg{font-size:12.5px;color:var(--muted);margin:12px 0;}
+.cmp-msg.err{color:var(--bad);}
+
+
+/* ---- 差分から分かること（提案） ---- */
+.sug{margin:28px 0 0;padding:20px 22px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;}
+.sug h2{margin:0 0 6px;font-size:16px;font-weight:700;}
+.sug-lede{margin:0 0 14px;font-size:12.5px;color:var(--muted);line-height:1.8;max-width:70ch;}
+.sug-now{display:flex;flex-wrap:wrap;gap:8px 24px;margin-bottom:14px;padding:10px 14px;
+  background:var(--rail);border-radius:6px;font-size:12.5px;}
+.sug-now b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+.sug-now .k{color:var(--dim);margin-right:6px;}
+.sug-list{display:flex;flex-direction:column;gap:1px;border:1px solid var(--line);
+  border-radius:6px;overflow:hidden;margin-bottom:14px;}
+.sug-row{display:flex;gap:11px;padding:10px 14px;background:var(--rail);cursor:pointer;
+  align-items:flex-start;}
+.sug-row:hover{background:var(--panel);}
+.sug-row input{margin:2px 0 0;}
+.sug-b{flex:1;}
+.sug-t{font-size:13px;}
+.sug-w{font-size:11.5px;color:var(--warn);margin-top:2px;}
+.sug-d{font-size:11.5px;color:var(--dim);margin-top:2px;}
+.sug-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.sug-empty{padding:12px 14px;background:var(--rail);border-radius:6px;
+  font-size:12.5px;color:var(--muted);}

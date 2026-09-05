@@ -7,4 +7,8 @@
 Mac は Traccia.command、Windows は Traccia.bat をダブルクリックでも開く。
 """
 
-__version__ = "1.1.0"
+# 版はパッケージ側の 1 か所だけで持つ。ここは読み替えるだけにして、
+# リリースのたびに 2 か所直す（そして片方を忘れる）のを避ける。
+from .. import __version__
+
+__all__ = ["__version__"]

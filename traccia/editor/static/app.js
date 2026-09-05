@@ -1057,6 +1057,7 @@ function openSpeakerSheet() {
   el.spkMsg.textContent = "";
   el.spkMsg.className = "hint";
   renderSpeakerSheet();
+  loadGenerations();
   el.spkOverlay.hidden = false;
   // オーバーレイは隠すだけなのでスクロール位置が残る。
   // 用語欄を触って閉じたあと開き直すと話者の見出しが画面外になるため、先頭へ戻す。
@@ -1064,6 +1065,178 @@ function openSpeakerSheet() {
   if (body) body.scrollTop = 0;
   const first = el.spkTable.querySelector('input[type="text"]:not(:disabled)');
   if (first) first.focus();
+}
+
+// ---- wfp から取り込む ----
+let wfpData = null;
+
+async function openWfpSheet() {
+  if (!S.setName) { status("セットを選んでください", "err"); return; }
+  wfpData = null;
+  el.wfpPreview.hidden = true;
+  el.wfpMsg.textContent = "";
+  el.wfpMsg.className = "warn-hint";
+  el.wfpFoot.textContent = "";
+  el.btnWfpGo.disabled = true;
+  el.wfpOverlay.hidden = false;
+  try {
+    const d = await api(`/api/sets/${encodeURIComponent(S.setName)}/wfp`);
+    if (!d.files.length) {
+      el.wfpFile.innerHTML = "";
+      el.wfpFileHint.textContent =
+        "このセットフォルダに .wfp がありません。Filmora のプロジェクトを動画と同じ場所に置いてください。";
+      return;
+    }
+    el.wfpFile.innerHTML = d.files.map(f =>
+      `<option value="${f.name}">${f.name}（${(f.size / 1e6).toFixed(1)}MB・${
+        new Date(f.modified * 1000).toLocaleString("ja-JP",
+          { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}）</option>`
+    ).join("");
+    el.wfpFileHint.textContent = `${d.files.length} 件。新しい順に並べています。`;
+    await loadWfpPreview();
+  } catch (e) {
+    el.wfpMsg.textContent = e.message;
+    el.wfpMsg.className = "warn-hint err";
+  }
+}
+
+async function loadWfpPreview() {
+  const name = el.wfpFile.value;
+  if (!name) return;
+  el.wfpMsg.textContent = "読み込んでいます…";
+  el.wfpMsg.className = "warn-hint";
+  el.btnWfpGo.disabled = true;
+  try {
+    wfpData = await api(`/api/sets/${encodeURIComponent(S.setName)}/wfp/preview?file=${
+      encodeURIComponent(name)}`);
+    renderWfpPreview(wfpData);
+    if (!wfpData.count) {
+      // 0 件を取り込むと、いまの字幕が空で置き換わる。押せないようにする
+      el.wfpMsg.textContent = "取り込める字幕がありません。上の警告を確かめてください。";
+      el.wfpMsg.className = "warn-hint err";
+      el.btnWfpGo.disabled = true;
+      return;
+    }
+    el.wfpMsg.textContent = "内容を確かめてから「取り込む」を押してください。";
+    el.btnWfpGo.disabled = false;
+  } catch (e) {
+    el.wfpPreview.hidden = true;
+    el.wfpMsg.textContent = e.message;
+    el.wfpMsg.className = "warn-hint err";
+  }
+}
+
+function renderWfpPreview(d) {
+  el.wfpPreview.hidden = false;
+  el.wfpName.textContent = `${d.projectName}（${fmtTC(d.duration, true)}）`;
+  el.wfpCount.textContent = `${d.count} 件`;
+  el.wfpNow.textContent = d.currentCount
+    ? `${d.currentCount} 件（${d.currentOrigin === "wfp" ? "前回の wfp 取り込み"
+        : d.currentOrigin === "transcribe" ? "文字起こしの生出力" : "手作業の確定版"}）`
+    : "—";
+  el.wfpKeep.textContent = d.willKeepManual
+    ? "いまの内容を manual.edit.json へ退避します"
+    : "退避しません（すでに手作業版があるか、いまの内容が wfp 由来）";
+
+  el.wfpWarn.innerHTML = (d.warnings || [])
+    .map(w => `<div class="tr-note">${w}</div>`).join("");
+
+  el.wfpMap.innerHTML = d.speakers.map(s => `
+    <div class="wfp-row">
+      <span class="wfp-swatch" style="background:${s.color}"></span>
+      <span class="wfp-who"><b>${s.label}</b>
+        <span>${s.count} 件・最初 ${fmtTC(s.first)}${s.preset ? "・" + s.preset : ""}</span></span>
+      <span class="wfp-why ${s.why.includes("件数") ? "guess" : ""}">${s.why || "—"}</span>
+      <select data-label="${s.label}">
+        <option value="">（そのまま: ${s.label}）</option>
+        ${d.known.map(n =>
+          `<option value="${n}"${n === s.assign ? " selected" : ""}>${n}</option>`).join("")}
+      </select>
+    </div>`).join("");
+
+  el.wfpExcluded.innerHTML = d.excludedCount
+    ? `<h3 class="sheet-sec">字幕トラック外のテロップ ${d.excludedCount} 件（取り込みません）</h3>
+       <div class="wfp-ex">${d.excluded.map(e =>
+         `<div class="wfp-ex-item">${fmtTC(e.start)}　${e.text.replace(/\n/g, " ")}</div>`
+       ).join("")}</div>`
+    : "";
+}
+
+async function runWfpImport() {
+  if (!wfpData) return;
+  el.btnWfpGo.disabled = true;
+  el.wfpMsg.textContent = "取り込んでいます…";
+  try {
+    if (S.dirty) await save("quiet");
+    const mapping = {};
+    el.wfpMap.querySelectorAll("select").forEach(sel => {
+      if (sel.value) mapping[sel.dataset.label] = sel.value;
+    });
+    const r = await api(`/api/sets/${encodeURIComponent(S.setName)}/wfp/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: el.wfpFile.value, mapping }),
+    });
+    el.wfpOverlay.hidden = true;
+    markClean();
+    await openSet(S.setName);
+    status(`${r.count} 件を取り込みました` +
+      (r.keptManual ? "（手作業版を manual.edit.json へ退避しました）" : ""), "ok");
+  } catch (e) {
+    el.wfpMsg.textContent = e.message;
+    el.wfpMsg.className = "warn-hint err";
+    el.btnWfpGo.disabled = false;
+  }
+}
+
+// 残っている版。文字起こしの生出力 / 手作業の確定版 / wfp の最終版
+async function loadGenerations() {
+  el.genList.innerHTML = '<div class="gen-row none"><span class="gen-name">読み込んでいます…</span><span></span><span></span></div>';
+  try {
+    const d = await api(`/api/sets/${encodeURIComponent(S.setName)}/generations`);
+    renderGenerations(d);
+  } catch (e) {
+    el.genList.innerHTML = `<div class="gen-row none"><span class="gen-name">${e.message}</span><span></span><span></span></div>`;
+  }
+}
+
+function renderGenerations(d) {
+  const cur = d.current || {};
+  const when = t => t ? new Date(t * 1000).toLocaleString("ja-JP",
+    { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  const originLabel = { transcribe: "文字起こしの生出力", manual: "手作業の確定版",
+                        wfp: "wfp の最終版" };
+
+  const rows = [`<div class="gen-row now">
+    <span class="gen-name"><b>いま編集中</b>
+      <span>edit.json ／ ${originLabel[cur.origin] || "手作業の確定版"}から</span></span>
+    <span class="gen-count">${cur.count != null ? cur.count + " 件" : ""}</span>
+    <span class="gen-when">${when(cur.savedAt)}</span>
+  </div>`];
+
+  for (const g of d.generations || []) {
+    rows.push(`<div class="gen-row ${g.exists ? "" : "none"}">
+      <span class="gen-name"><b>${g.label}</b><span>${g.file}</span></span>
+      <span class="gen-count">${g.exists ? (g.count ?? "") + " 件" : "まだ無い"}</span>
+      <span class="gen-when">${g.exists ? when(g.savedAt) : ""}</span>
+    </div>`);
+  }
+  el.genList.innerHTML = rows.join("");
+}
+
+async function markManual() {
+  if (S.dirty) await save("quiet");
+  el.btnMarkManual.disabled = true;
+  try {
+    const d = await api(`/api/sets/${encodeURIComponent(S.setName)}/generations/manual`,
+                        { method: "POST" });
+    renderGenerations(d);
+    status(`いまの ${d.count} 件を手作業の確定版として置きました`, "ok");
+  } catch (e) {
+    status("置き直しに失敗: " + e.message, "err");
+  } finally {
+    el.btnMarkManual.disabled = false;
+  }
 }
 
 function renderSpeakerSheet() {
@@ -1273,8 +1446,12 @@ function warn(title, body, hint) {
 /**
  * 再生位置や指定位置に、空の字幕を 1 件足す。
  * 入らなければ null を返し、警告を出す。
+ *
+ * edit を false にすると、足すだけで本文の入力を始めない。
+ * タイムラインへ置きに行くときは、続けて位置や尺を直したいことが多く、
+ * 右のリストに入力欄が開くと手が止まるため。
  */
-function addCue(start, speaker, dur) {
+function addCue(start, speaker, dur, edit = true) {
   if (!S.cues.length && !S.speakers.length) return null;
   speaker = speaker || S.speakers[0];
 
@@ -1312,7 +1489,7 @@ function addCue(start, speaker, dur) {
   commitStructuralChange();
   ensureVisible(cue);
   status(`${speaker} に ${fmtTC(start)} から ${(end - start).toFixed(2)} 秒の字幕を追加`, "ok");
-  beginEdit(cue.id, true);
+  if (edit) beginEdit(cue.id, true);
   return cue;
 }
 
@@ -1360,7 +1537,12 @@ function splitCueAt(c, t) {
 
 function splitAtPlayhead() {
   const t = currentTime();
-  const c = cuesAt(t)[0] || soleSelected();
+  const at = cuesAt(t);
+  // 再生ヘッドが乗っていて、かつ**選んでいる**ものを最優先する。
+  // 話者のブロックが時間で重なっていると、選択を見ないと時間順で先に来たほう
+  // （別の話者）が割れてしまう。結合（M）はもともと選択を先に見ているので、
+  // そちらに揃える。
+  const c = at.find(x => S.sel.has(x.id)) || soleSelected() || at[0];
   if (!canSplitAt(c, t)) { status("分割できる位置に再生ヘッドがありません"); return; }
   splitCueAt(c, t);
 }
@@ -1613,7 +1795,14 @@ el.__initDrag = () => {
       undoSnap: snapshot(),
       laneTop: el.lanes.getBoundingClientRect().top,
       laneH: el.lanes.children[0] ? el.lanes.children[0].offsetHeight : 34,
+      // 端送りのために、掴んだ時刻と基準の矩形を持っておく
+      box: el.tlScroll.getBoundingClientRect(),
+      tGrab: 0,
+      at: null,
+      edge: null,
     };
+    drag.tGrab = pxToT(ev.clientX - drag.box.left);
+    drag.edge = makeEdgeScroller(drag.box, () => applyDrag());
     drag.pointerId = ev.pointerId;
     ev.preventDefault();
     cueEl.classList.add("dragging");
@@ -1675,8 +1864,19 @@ el.__initDrag = () => {
     if (!drag.moved && Math.abs(dx) < 2 && Math.abs(ev.clientY - drag.y0) < 4) return;
     drag.moved = true;
 
-    const snapOn = drag.snapOn && !ev.altKey;
-    let dt = dx / scale();
+    drag.at = { x: ev.clientX, y: ev.clientY, alt: ev.altKey };
+    applyDrag();
+    drag.edge.update(ev.clientX, ev.clientY);
+  };
+
+  /** いまのポインタ位置でブロックを置き直す。端送りの最中も同じものを呼ぶ。 */
+  const applyDrag = () => {
+    if (!drag || !drag.at) return;
+    const ev = drag.at;
+    const snapOn = drag.snapOn && !ev.alt;
+    // ずれは px ではなく**秒**で出す。端で表示範囲を送ると同じ px が別の時刻を
+    // 指すので、px の差のままだと送っても掴んだものが動かない。
+    let dt = pxToT(ev.x - drag.box.left) - drag.tGrab;
 
     if (drag.mode === "move") {
       // 掴んだブロックの開始と終了の両方を調べ、吸着した方のずれを全体に適用する。
@@ -1699,7 +1899,7 @@ el.__initDrag = () => {
       // 縦方向 → 話者変更。
       // 掴んだブロックが何段動いたかを、選択したもの全部に同じだけ足す。
       // 「ポインタのある 1 段」にそろえると、複数の段にまたがる選択が 1 段に潰れる。
-      const laneIdx = Math.floor((ev.clientY - drag.laneTop) / drag.laneH);
+      const laneIdx = Math.floor((ev.y - drag.laneTop) / drag.laneH);
       const last = S.speakers.length - 1;
       let dLane = Math.max(0, Math.min(last, laneIdx)) - drag.grabbedLane;
       // どれかが段からはみ出す手前で、全体を止める。時間方向の dt と同じ考え方で、
@@ -1744,6 +1944,7 @@ el.__initDrag = () => {
     window.removeEventListener("pointerup", onPointerUp, true);
     window.removeEventListener("pointercancel", onPointerCancel, true);
     window.removeEventListener("blur", onWindowBlur);
+    if (drag && drag.edge) drag.edge.stop();
     document.body.classList.remove("drag-move", "drag-edge");
     clearSnapGuides();
     if (drag) dragLog("end", { moved: drag.moved, mode: drag.mode });
@@ -1786,24 +1987,74 @@ el.__initDrag = () => {
     );
     // 長さは秒ではなく見た目の幅で決める（倍率が変わっても掴める大きさを保つ）
     const dur = Math.min(NEW_CUE_MAX_SEC, Math.max(NEW_CUE_MIN_SEC, NEW_CUE_PX / scale()));
-    addCue(t, laneEl.dataset.spk, dur);
+    // 置くだけ。本文の入力は始めない（続けて位置や尺を直せるように）
+    addCue(t, laneEl.dataset.spk, dur, false);
   });
 };
 
-/* ---------- 空きレーンのドラッグ = 範囲選択 ---------- */
+/* ---------- 掴んだまま端へ寄せたときの送り ----------
+   範囲選択のドラッグと、ブロックのドラッグの両方で使う。 */
 
 // 端からこの距離に入ったら表示を送り始める
 const EDGE_PX = 44;
 // 端に張り付いたときの速さ（px/秒相当）。深く入るほどこれに近づく
 const EDGE_SPEED = 900;
 
+/**
+ * 端に寄せている間、表示範囲を送り続ける仕掛けを作る。
+ *
+ * タイムラインは横スクロールではなく表示範囲（S.view）を動かす作りなので、
+ * 送るというのは setView で窓をずらすこと。送るたびに onStep を呼ぶので、
+ * 呼び出し側はそこで矩形なりブロックなりを計算し直す。
+ *
+ * update(x, y) をポインタが動くたびに呼び、終わったら stop() を呼ぶ。
+ */
+function makeEdgeScroller(box, onStep) {
+  let raf = 0, lastTs = 0, at = null;
+
+  const step = (ts) => {
+    raf = 0;
+    if (!at) return;
+    // タブから戻った直後に一気に飛ばさない
+    const ms = lastTs ? Math.min(50, ts - lastTs) : 16;
+    lastTs = ts;
+
+    let dir = 0, depth = 0;
+    if (at.x < box.left + EDGE_PX) {
+      dir = -1; depth = (box.left + EDGE_PX - at.x) / EDGE_PX;
+    } else if (at.x > box.right - EDGE_PX) {
+      dir = 1; depth = (at.x - (box.right - EDGE_PX)) / EDGE_PX;
+    }
+    if (!dir) { lastTs = 0; return; }   // 端から離れたら止める。次に入ったら update が起こす
+
+    const span = S.view.t1 - S.view.t0;
+    const move = dir * EDGE_SPEED * Math.min(1, depth) * (ms / 1000) / scale();
+    const t0 = Math.max(0, Math.min(Math.max(0, S.duration - span), S.view.t0 + move));
+    if (t0 !== S.view.t0) { setView(t0, t0 + span); onStep(); }
+    // 端まで送り切ったら t0 が動かなくなるので、以降は何もしないまま回る
+    raf = requestAnimationFrame(step);
+  };
+
+  return {
+    update(x, y) {
+      at = { x, y };
+      if ((x < box.left + EDGE_PX || x > box.right - EDGE_PX) && !raf) {
+        lastTs = 0;
+        raf = requestAnimationFrame(step);
+      }
+    },
+    stop() { at = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } },
+  };
+}
+
+/* ---------- 空きレーンのドラッグ = 範囲選択 ---------- */
 function startMarquee(ev) {
   const box = el.tlScroll.getBoundingClientRect();
   // 起点は px ではなく**秒**で持つ。端で表示範囲を送ると、同じ px が別の時刻を
   // 指すようになるため。px のまま持つと、送った瞬間に矩形が飛ぶ。
   const tAnchor = pxToT(ev.clientX - box.left);
   const x0 = ev.clientX, y0 = ev.clientY;
-  let moved = false, cur = ev, raf = 0, lastTs = 0;
+  let moved = false, cur = ev;
   const m = el.marquee;
 
   const paint = () => {
@@ -1821,31 +2072,7 @@ function startMarquee(ev) {
     select(cuesInBox(li0, li1, pxToT(l), pxToT(r)).map(c => c.id), false);
   };
 
-  /** 端に寄せている間、表示範囲を送り続ける。送るたびに選択を取り直す。 */
-  const step = (ts) => {
-    raf = 0;
-    if (!moved) return;
-    const ms = lastTs ? Math.min(50, ts - lastTs) : 16;   // タブ復帰時に飛ばない程度に抑える
-    lastTs = ts;
-
-    let dir = 0, depth = 0;
-    if (cur.clientX < box.left + EDGE_PX) {
-      dir = -1; depth = (box.left + EDGE_PX - cur.clientX) / EDGE_PX;
-    } else if (cur.clientX > box.right - EDGE_PX) {
-      dir = 1; depth = (cur.clientX - (box.right - EDGE_PX)) / EDGE_PX;
-    }
-    if (dir) {
-      const span = S.view.t1 - S.view.t0;
-      const move = dir * EDGE_SPEED * Math.min(1, depth) * (ms / 1000) / scale();
-      const t0 = Math.max(0, Math.min(Math.max(0, S.duration - span), S.view.t0 + move));
-      if (t0 !== S.view.t0) { setView(t0, t0 + span); paint(); }
-      // 端まで送り切ったら止まる（t0 が動かなくなるので次のフレームで何もしない）
-    } else {
-      lastTs = 0;
-      return;   // 端から離れたら回すのをやめる。次に端へ入ったら onMove が起こす
-    }
-    raf = requestAnimationFrame(step);
-  };
+  const edge = makeEdgeScroller(box, paint);
 
   const onMove = (e) => {
     if (!moved && Math.abs(e.clientX - x0) < 3 && Math.abs(e.clientY - y0) < 3) return;
@@ -1853,13 +2080,12 @@ function startMarquee(ev) {
     m.hidden = false;
     cur = e;
     paint();
-    const nearEdge = e.clientX < box.left + EDGE_PX || e.clientX > box.right - EDGE_PX;
-    if (nearEdge && !raf) { lastTs = 0; raf = requestAnimationFrame(step); }
+    edge.update(e.clientX, e.clientY);
   };
   const onUp = () => {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
-    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    edge.stop();
     m.hidden = true;
     // 空きをクリックしただけなら選択を外すだけ。再生ヘッドはルーラーからしか動かさない。
     if (!moved) { S.sel.clear(); paintSelection(); }
@@ -2407,7 +2633,7 @@ async function openTranscribeSheet() {
   el.trSet.textContent = S.setName;
   el.trCost.textContent = "…";
   try {
-    const d = await api(`/api/sets/${encodeURIComponent(S.setName)}/transcribe`);
+    const d = await fetchPlan();
     if (d.job && d.job.status === "running") {
       trJobId = d.job.id;
       trShowRun();
@@ -2415,7 +2641,7 @@ async function openTranscribeSheet() {
       startPolling();
       return;
     }
-    renderEstimate(d.estimate, d.busy);
+    renderEstimate(d.estimate, d.plan, d.busy);
   } catch (e) {
     el.trReady.textContent = e.message;
     el.trReady.className = "warn-hint err";
@@ -2423,19 +2649,80 @@ async function openTranscribeSheet() {
   }
 }
 
-function renderEstimate(est, busy) {
+// いま選んでいる組み合わせ
+function trPicked() {
+  return {
+    gemini: el.trUseGemini.checked,
+    local: Array.from(document.querySelectorAll(".trLocal"))
+      .filter(c => c.checked).map(c => c.value),
+  };
+}
+
+function fetchPlan() {
+  const p = trPicked();
+  const q = `?gemini=${p.gemini ? 1 : 0}&local=${encodeURIComponent(p.local.join(","))}`;
+  return api(`/api/sets/${encodeURIComponent(S.setName)}/transcribe${q}`);
+}
+
+// チェックを変えたら、想定費用と時間を出し直す
+async function trRefreshPlan() {
+  try {
+    const d = await fetchPlan();
+    renderEstimate(d.estimate, d.plan, d.busy);
+  } catch (e) {
+    el.trReady.textContent = e.message;
+    el.trReady.className = "warn-hint err";
+  }
+}
+
+function fmtMin(sec) {
+  if (!sec) return "—";
+  const m = Math.round(sec / 60);
+  return m < 1 ? "1 分未満" : `約 ${m} 分`;
+}
+
+function renderEstimate(est, plan, busy) {
+  const p = trPicked();
+  const use = plan || est;
+
   el.trDur.textContent = fmtTC(est.duration, true);
-  el.trChunks.textContent = `${est.chunks} 回（1 回あたり ${est.chunkSec} 秒）`;
-  el.trModel.textContent = est.model;
-  el.trCost.textContent = `${usd(est.cost)}  （1 時間あたり ${usd(est.costPerHour)}）`;
+  el.trChunks.textContent = p.gemini
+    ? `${est.chunks} 回（1 回あたり ${est.chunkSec} 秒）` : "—（Gemini を使わない）";
+  el.trModel.textContent = p.gemini ? est.model : "ローカルのみ";
+  el.trCost.textContent = p.gemini
+    ? `${usd(use.cost)}  （1 時間あたり ${usd(est.costPerHour)}）` : "無料";
+  el.trTime.textContent = fmtMin(use.totalSec);
   el.trMonth.textContent = usd(est.monthCost) +
     (est.monthlyLimitUsd > 0 ? `　/　上限 ${usd(est.monthlyLimitUsd)}` : "　（上限なし）");
 
+  // 選択肢ごとの内訳
+  el.trPickGeminiCost.textContent = `${usd(est.cost)} / ${fmtMin(use.geminiSec)}`;
+  const choices = (use.localChoices || []);
+  for (const c of choices) {
+    const box = c.id === "small" ? el.trPickSmall : el.trPickMedium;
+    if (box) box.textContent = `無料 / ${fmtMin(est.duration * c.secPerSec)}`;
+  }
+  const localOk = use.localAvailable !== false;
+  el.trLocalHint.hidden = localOk;
+  document.querySelectorAll(".trLocal").forEach(c => {
+    c.disabled = !localOk;
+    c.closest(".tr-pick-row").classList.toggle("off", !localOk);
+  });
+
   let msg = "", bad = false;
-  if (!est.hasKey) { msg = "API キーが未設定です。［設定］で入れてください。"; bad = true; }
-  else if (!est.enabled) { msg = "Gemini 文字起こしが「使わない」になっています。［設定］で切り替えてください。"; bad = true; }
-  else if (busy) { msg = "別のセットの処理が動いています。終わるまで待ってください。"; bad = true; }
-  else {
+  if (!p.gemini && !p.local.length) {
+    msg = "使うものを 1 つ以上選んでください。"; bad = true;
+  } else if (p.gemini && !est.hasKey) {
+    msg = "API キーが未設定です。［設定］で入れてください。"; bad = true;
+  } else if (p.gemini && !est.enabled) {
+    msg = "Gemini 文字起こしが「使わない」になっています。［設定］で切り替えてください。"; bad = true;
+  } else if (busy) {
+    msg = "別のセットの処理が動いています。終わるまで待ってください。"; bad = true;
+  } else if (!p.gemini) {
+    msg = "ローカルだけで作ります。無料ですが、本文の精度は Gemini より落ちます（時刻はむしろ良い）。";
+  } else if (!p.local.length) {
+    msg = "Gemini だけで作ります。時刻がずれる箇所が残ります（ローカルを足すと直ります）。";
+  } else {
     msg = "上の金額は見積もりです。実際の請求はトークン数で決まるので前後します。";
   }
   el.trReady.textContent = msg;
@@ -2453,7 +2740,9 @@ async function startTranscribe() {
     const job = await api(`/api/sets/${encodeURIComponent(S.setName)}/transcribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ speakers: n > 0 ? n : 0 }),
+      body: JSON.stringify({ speakers: n > 0 ? n : 0,
+                             gemini: trPicked().gemini,
+                             localModels: trPicked().local }),
     });
     trJobId = job.id;
     trShowRun();
@@ -2482,16 +2771,15 @@ function startPolling() {
 }
 
 function renderJob(j) {
-  const total = j.chunks || 1;
-  const pct = j.status === "running"
-    ? Math.min(100, Math.round((Math.max(0, j.chunk - 1) / total) * 100))
-    : 100;
-  el.trBarFill.style.width = pct + "%";
+  // 上部のバーは「全体」を表す。Gemini のチャンク数だけを見ていたころは、
+  // Gemini が終わった時点でほぼ満杯になり、ローカルがまだ 37% でも満杯に見えた。
+  el.trBarFill.style.width = overallPct(j) + "%";
   el.trElapsed.textContent = `${Math.round(j.elapsed)} 秒`;
   el.trSpent.textContent = usd(j.cost);
   el.trMsg.textContent = j.error || j.message || "";
   el.trMsg.className = "tr-msg" +
     (j.status === "error" ? " err" : j.status === "done" ? " ok" : "");
+  renderEngines(j);
 
   if (j.status === "running") return;
 
@@ -2517,6 +2805,51 @@ function renderJob(j) {
     }
   }
   status(j.error || j.message || "", j.status === "done" ? "ok" : "err");
+}
+
+// 全体の進み具合。走っている系統をならす
+function overallPct(j) {
+  if (j.status !== "running") return 100;
+  const eng = Object.values(j.engines || {});
+  if (!eng.length) {
+    const total = j.chunks || 1;
+    return Math.min(100, Math.round((Math.max(0, j.chunk - 1) / total) * 100));
+  }
+  const each = eng.map(e =>
+    e.status === "done" || e.status === "cancelled" ? 100
+    : e.duration > 0 ? Math.min(100, (e.at / e.duration) * 100) : 0);
+  return Math.round(each.reduce((a, b) => a + b, 0) / each.length);
+}
+
+// 進捗に出す時刻。ミリ秒までは要らない（4:43.730 は細かすぎた）
+function fmtMin2(t) {
+  const s = Math.max(0, Math.floor(t || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// 系統ごとの進み具合。どれかが失敗しても、残りで結果が出る
+function renderEngines(j) {
+  const eng = j.engines || {};
+  const order = ["gemini", "small", "medium"];
+  const rows = order.filter(k => eng[k]).map(k => {
+    const e = eng[k];
+    const pct = e.duration > 0 ? Math.min(100, Math.round(e.at / e.duration * 100)) : 0;
+    const note =
+      e.status === "done" ? (e.message || "完了")
+      : e.status === "error" ? (e.message || "失敗")
+      : e.status === "cancelled" ? "中止"
+      : e.status === "waiting" ? "待機中"
+      : e.duration > 0 ? `${fmtMin2(e.at)} / ${fmtMin2(e.duration)}（${pct}%）` : "…";
+    const w = e.status === "done" ? 100 : pct;
+    return `<div class="tr-eng ${e.status}">
+      <span class="tr-eng-name">${k}</span>
+      <span class="tr-eng-bar"><span class="tr-eng-fill" style="width:${w}%"></span></span>
+      <span class="tr-eng-note">${note}</span>
+    </div>`;
+  });
+  el.trEngines.innerHTML = rows.join("");
+  el.trNotes.innerHTML = (j.notes || [])
+    .map(n => `<div class="tr-note">${n}</div>`).join("");
 }
 
 async function stopJob() {
@@ -2823,6 +3156,11 @@ function initRefs() {
     "btnTranscribe","trOverlay","btnTrClose","btnTrCancel","btnTrGo","btnTrStop",
     "trTitle","trConfirm","trRun","trSet","trDur","trChunks","trModel","trCost","trMonth",
     "trReady","trSpeakers","trBarFill","trMsg","trElapsed","trSpent","trFoot",
+    "trUseGemini","trPickGeminiCost","trPickSmall","trPickMedium","trLocalHint",
+    "trTime","trEngines","trNotes","genList","btnMarkManual",
+    "btnWfp","wfpOverlay","btnWfpClose","btnWfpCancel","btnWfpGo","wfpFile",
+    "wfpFileHint","wfpPreview","wfpName","wfpCount","wfpNow","wfpKeep","wfpWarn",
+    "wfpMap","wfpExcluded","wfpMsg","wfpFoot","btnCompare",
     "wlOverlay","wlBody","btnWlClose","wlLive",
     "edOverlay","btnEdClose","edSkipConfirm",
   ]) el[id] = $(id);
@@ -3016,6 +3354,17 @@ function initEvents() {
   el.listFilter.addEventListener("search", applyFilter);   // ✕ で消したとき
 
   el.btnSpeakers.addEventListener("click", openSpeakerSheet);
+  el.btnMarkManual.addEventListener("click", markManual);
+  el.btnWfp.addEventListener("click", openWfpSheet);
+  // 差分は別タブ。読むだけの画面なので、エディタと並べて見られるようにする
+  el.btnCompare.addEventListener("click", () => {
+    if (!S.setName) { status("セットを選んでください", "err"); return; }
+    window.open(`/compare?set=${encodeURIComponent(S.setName)}`, "_blank");
+  });
+  el.wfpFile.addEventListener("change", loadWfpPreview);
+  el.btnWfpGo.addEventListener("click", runWfpImport);
+  for (const b of [el.btnWfpClose, el.btnWfpCancel])
+    b.addEventListener("click", () => { el.wfpOverlay.hidden = true; });
   el.btnSpkAdd.addEventListener("click", addSpeakerRow);
   el.btnSpkApply.addEventListener("click", applySpeakerSheet);
   el.btnSpkCancel.addEventListener("click", () => { el.spkOverlay.hidden = true; });
@@ -3063,6 +3412,10 @@ function initEvents() {
   });
 
   el.btnTranscribe.addEventListener("click", () => { openTranscribeSheet(); });
+  // 使うものを変えたら、想定費用と時間を出し直す
+  el.trUseGemini.addEventListener("change", trRefreshPlan);
+  document.querySelectorAll(".trLocal").forEach(c =>
+    c.addEventListener("change", trRefreshPlan));
   el.btnTrGo.addEventListener("click", startTranscribe);
   el.btnTrStop.addEventListener("click", stopJob);
   el.btnTrCancel.addEventListener("click", () => { el.trOverlay.hidden = true; });

@@ -282,6 +282,40 @@ py -3.13 -m venv .venv          # 3.12 でも可。手順1の py --list で確�
 > ⚠️ `pyannote.audio==3.4.0` のインストール時に `Building wheel for tensorboardX...` 等で
 > 数十秒止まって見えても**中断しない**でください。
 
+### 5b. 話者分離を使わない場合（軽い手順）
+
+`--diarize` を使わないなら、**torch も pyannote も HuggingFace のトークンも要りません。**
+文字起こしだけなら次の 1 行で足ります。
+
+```powershell
+.venv\Scripts\python -m pip install --no-cache-dir faster-whisper
+```
+
+GPU で回すなら、ctranslate2 が必要とする cuBLAS / cuDNN の DLL を足します。
+
+```powershell
+.venv\Scripts\python -m pip install --no-cache-dir nvidia-cublas-cu12 nvidia-cudnn-cu12
+```
+
+> `--no-cache-dir` を付けるのは、壊れたダウンロードを再利用させないため。
+> `nvidia-cudnn-cu12` は 700MB 近くあり、`Bad CRC-32 for file ...cudnn_adv64_9.dll` の
+> ような失敗が起きることがあります。そのときは `pip cache purge` してから入れ直してください。
+> Defender のスキャンが噛んでいる場合は、管理者権限の PowerShell で
+> `Add-MpPreference -ExclusionPath "D:\path\to\traccia"` を入れると速くなります。
+
+この構成での確認は次の 1 行です（**torch は入っていないので、手順 6 の torch を含む確認は通りません**）。
+
+```powershell
+.venv\Scripts\python -c "import ctranslate2; print('GPU:', ctranslate2.get_cuda_device_count())"
+```
+
+`GPU: 1` 以上なら GPU が使えます。`0` なら CPU で回すか、方法 A（CUDA 版 torch）に切り替えます。
+
+> **`.venv` を作る場所と、実行するフォルダに注意。**
+> `python -m traccia ...` はパッケージ `traccia/` の**親**（リポジトリのルート）で実行します。
+> `traccia\` の中に入って実行するとパッケージが見つかりません。
+> `.venv` はどこに作っても構いませんが、実行はルートから行ってください。
+
 ### 6. インストール確認
 
 ```powershell
@@ -307,31 +341,44 @@ py -3.13 -m venv .venv          # 3.12 でも可。手順1の py --list で確�
 ### 文字起こしのみ（GPU自動利用）
 
 ```powershell
-.venv\Scripts\python transcribe.py sample.mp4 --device cuda --compute-type int8
+.venv\Scripts\python transcribe.py sample.mp4 --device cuda
 ```
 
 - `--device cuda` … GPU を使用（省略時 `auto` でGPUがあれば自動的に使用）
-- `--compute-type int8` … GTX 1060 など Pascal 世代では `int8` が最適
-  （`float16` は Pascal では遅いので避ける。RTX 以降なら `float16` も可）
+- `--compute-type` … **指定しないこと。** 既定の `auto` が、GPU なら `float32`、
+  CPU なら `int8` を選ぶ
+
+> ⚠️ **GPU で `int8` を使わないでください。出力が壊れます。**
+> モデルが同じ本文を延々と繰り返す状態に落ちます。29 分の素材を `medium` で処理した実測で、
+> 7 分 48 秒の地点から最後まで「1」という 1 文字を 501 回繰り返し、**出力の 71% が失われました。**
+> `.srt` は正常に書き出されるので、エディタで開くまで気づけません。
+>
+> `float16` は GTX 1060 など Pascal 世代では**実行そのものができません**
+> （`ValueError: Requested float16 compute type, but the target device or backend
+> do not support efficient float16 computation.`）。RTX 以降なら使えます。
+>
+> CPU の `int8` は `medium` でも正常です。壊れるのは GPU の `int8` だけ。
+> 暴走した場合は実行の最後に警告が出ます。
 
 ### 話者分離あり（GPU）
 
 ```powershell
 .venv\Scripts\python transcribe.py sample.mp4 `
   --diarize --speakers 3 --split-speakers `
-  --device cuda --compute-type int8 `
+  --device cuda `
   --hf-token hf_xxxxxxxxxxxxxxxxx
 ```
 
 ### 大きいモデルで高精度に（VRAMに注意）
 
 ```powershell
-.venv\Scripts\python transcribe.py sample.mp4 --model large-v3 --device cuda --compute-type int8 --diarize
+.venv\Scripts\python transcribe.py sample.mp4 --model large-v3 --device cuda --diarize
 ```
 
 > **VRAM 6GB の注意**: `large-v3`（float16で約3GB）と話者分離（torch）を**同時に**載せると
 > 6GB を超える恐れがあります。本ツールは文字起こしと話者分離を**別プロセスで順番に**実行するため、
-> 6GB でも基本的に問題ありません。それでも不足する場合は `--compute-type int8` または `--model medium` に下げてください。
+> 6GB でも基本的に問題ありません。それでも不足する場合は `--model medium` に下げてください。
+> **VRAM を節約する目的で `--compute-type int8` にしないこと**（上の警告を参照）。
 
 ---
 
@@ -342,7 +389,7 @@ py -3.13 -m venv .venv          # 3.12 でも可。手順1の py --list で確�
 | `input`（位置引数） | — | 入力する動画/音声ファイル |
 | `--model` | `medium` | モデルサイズ `tiny`/`base`/`small`/`medium`/`large-v3` |
 | `--device` | `auto` | `auto`/`cpu`/`cuda`。auto は CUDA があれば自動でGPU使用 |
-| `--compute-type` | `int8` | 計算精度 `int8`/`int8_float16`/`float16`/`float32` |
+| `--compute-type` | `auto` | 計算精度。`auto` は CPU なら `int8`、GPU なら `float32`。GPU の `int8` は出力が壊れる |
 | `--language` | `ja` | 言語コード。`auto` で自動判定 |
 | `--formats` | `srt txt` | 出力形式（`srt` `txt` を空白区切りで複数指定可） |
 | `--outdir` | 入力と同じ場所 | 出力先ディレクトリ |
@@ -415,6 +462,16 @@ dest/
 | M2 Mac 8GB（CPU/NEON） | 1〜1.5時間 | +約40分 | **1.5〜2時間** |
 | **Win10 + GTX 1060（CUDA）** | 6〜12分 | +10〜15分 | **20〜30分** |
 
+実測（29 分の動画・話者分離なし・`--formats srt`）:
+
+| 環境 | モデル | 精度 | 所要 |
+|---|---|---|---|
+| Intel Mac i7-7700K（CPU） | `small` | `int8` | 15.6分 |
+| Intel Mac i7-7700K（CPU） | `medium` | `int8` | 22.7分 |
+| Win + GTX 1060（CUDA） | `medium` | `float32` | **2.7分** |
+
+GPU は同じ `medium` で CPU の 8 倍速い。出力の中身は一致する（総字数まで同じ）。
+
 モデル別（GTX 1060 / CUDA / 1時間動画 / 話者分離込み）:
 
 | モデル | 合計目安 |
@@ -461,6 +518,7 @@ torch 2.6 から `torch.load` の既定が `weights_only=True` になり、pyann
 - 最新ドライバへ更新してください。
 
 ### VRAM 不足（CUDA out of memory）
-`--compute-type int8` にする、`--model` を下げる（`medium`→`small`）と改善します。
+`--model` を下げる（`medium`→`small`）と改善します。
+GPU では `--compute-type int8` にしないこと（出力が壊れます）。
 ```
 

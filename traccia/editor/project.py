@@ -19,6 +19,19 @@ from .srt import UNKNOWN, Cue
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".webm")
 PROJECT_VERSION = 1
 
+# edit.json がどこから来たか。フィードバック（TRAC-23/24）で
+# 「機械が出したもの」と「人が直したもの」を突き合わせるために要る。
+ORIGIN_TRANSCRIBE = "transcribe"   # 文字起こしの生出力
+ORIGIN_MANUAL = "manual"           # 人が直し切った確定版
+ORIGIN_WFP = "wfp"                 # Filmora から取り戻した最終版
+
+# 残す版と、その説明。画面にもこの順で出す。
+GENERATIONS = [
+    {"kind": "auto",   "origin": ORIGIN_TRANSCRIBE, "label": "文字起こしの生出力"},
+    {"kind": "manual", "origin": ORIGIN_MANUAL,     "label": "手作業の確定版"},
+    {"kind": "wfp",    "origin": ORIGIN_WFP,        "label": "wfp の最終版"},
+]
+
 # 「princi.話者A.srt」の 話者A 部分。改名後の日本語名（princi.話者たけ.srt）も拾う
 PER_SPEAKER_RE = re.compile(r"^(?P<stem>.+)\.話者(?P<spk>[^.]+)$")
 
@@ -78,6 +91,27 @@ class SetPaths:
     @property
     def project_file(self) -> Path:
         return self.root / f"{self.stem}.edit.json"
+
+    def generation_file(self, kind: str) -> Path:
+        """性質のちがう版の置き場。edit.json は現役の編集データのまま。
+
+            auto   … 文字起こしの生出力。流した瞬間の姿
+            manual … 人が直し切った確定版
+            wfp    … Filmora のプロジェクトから取り戻した最終版
+        """
+        return self.root / f"{self.stem}.{kind}.edit.json"
+
+    @property
+    def auto_file(self) -> Path:
+        return self.generation_file("auto")
+
+    @property
+    def manual_file(self) -> Path:
+        return self.generation_file("manual")
+
+    @property
+    def wfp_file(self) -> Path:
+        return self.generation_file("wfp")
 
     @property
     def settings_file(self) -> Path:
@@ -404,10 +438,39 @@ def load(paths: SetPaths) -> dict:
     }
 
 
+def read_origin(path: Path) -> dict:
+    """その版がどこから来たかを読む。
+
+    origin を持たない古いファイルは **手作業の確定版として扱う**。判断が付かない
+    ものを機械の出力とみなすと、次の取り込みで手作業が退避されずに消える。
+    安全side に倒す。
+    """
+    if not path.exists():
+        return {}
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        "origin": str(d.get("origin") or ORIGIN_MANUAL),
+        "originAt": d.get("originAt"),
+        "savedAt": d.get("savedAt"),
+        "count": len(d.get("cues") or []),
+        "hasOrigin": bool(d.get("origin")),
+    }
+
+
 def save(paths: SetPaths, payload: dict) -> dict:
     """編集内容を <stem>.edit.json に書く。原本には触らない。"""
     cues = [Cue.from_dict(d) for d in payload.get("cues", [])]
     _renumber(cues)
+
+    # origin は書き換えの指示が来たときだけ変える。人が本文を直しただけで
+    # 「機械の出力」から「手作業版」に変わってしまうと、どちらを退避すべきかが
+    # 分からなくなる。版の切り替えは import_segments と mark_manual だけが行う。
+    prev = read_origin(paths.project_file)
+    origin = str(payload.get("origin") or prev.get("origin") or ORIGIN_MANUAL)
+    origin_at = payload.get("originAt") or prev.get("originAt") or time.time()
 
     doc = {
         "version": PROJECT_VERSION,
@@ -415,6 +478,8 @@ def save(paths: SetPaths, payload: dict) -> dict:
         "stem": paths.stem,
         "video": paths.video.name,
         "savedAt": time.time(),
+        "origin": origin,
+        "originAt": origin_at,
         "speakers": payload.get("speakers") or speakers_of(cues, paths),
         "cues": [c.to_dict() for c in cues],
     }
@@ -425,12 +490,87 @@ def save(paths: SetPaths, payload: dict) -> dict:
     return {"ok": True, "path": str(paths.project_file), "count": len(cues)}
 
 
-def import_segments(paths: SetPaths, segments: list[dict]) -> dict:
+def snapshot(paths: SetPaths, kind: str) -> dict:
+    """いまの edit.json を、指定の版として写す。
+
+    上書きの前に backup/ へ回すので、写し先に何かあっても失われない。
+    """
+    src = paths.project_file
+    if not src.exists():
+        return {"ok": False, "reason": "編集データがありません"}
+    dst = paths.generation_file(kind)
+    _rotate_backups(dst, paths.backup_dir)
+    try:
+        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError as e:
+        return {"ok": False, "reason": str(e)}
+    return {"ok": True, "path": str(dst), **read_origin(dst)}
+
+
+def ensure_manual_snapshot(paths: SetPaths) -> dict:
+    """手作業の確定版を、条件を満たすときだけ 1 回だけ写す。
+
+    wfp を取り込むと edit.json は丸ごと差し替わる。そのとき人が直し切った版が
+    backup/ の 5 世代に流れて消えてしまうので、その前にここで退避する。
+
+    写すのは次の両方を満たすときだけ:
+      ・manual.edit.json がまだ無い
+      ・いまの edit.json の origin が wfp でない
+
+    2 回目以降の wfp 取り込みでは、いまの edit.json は 1 回目の wfp 抽出結果なので
+    写さない。これで「手作業版 1 つ + wfp 版 1 つ」が常に並ぶ。
+    """
+    if paths.manual_file.exists():
+        return {"ok": False, "reason": "すでに手作業の確定版があります",
+                "skipped": True}
+    cur = read_origin(paths.project_file)
+    if cur.get("origin") == ORIGIN_WFP:
+        return {"ok": False, "reason": "いまの編集データは wfp から取り込んだものです",
+                "skipped": True}
+    return snapshot(paths, "manual")
+
+
+def mark_manual(paths: SetPaths) -> dict:
+    """いまの状態を手作業の確定版として置き直す。
+
+    やり直しのための出口。人が押したときだけ動く。
+    """
+    doc = json.loads(paths.project_file.read_text(encoding="utf-8"))
+    doc["origin"] = ORIGIN_MANUAL
+    doc["originAt"] = time.time()
+    _rotate_backups(paths.project_file, paths.backup_dir)
+    tmp = paths.project_file.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(paths.project_file)
+    _rotate_backups(paths.manual_file, paths.backup_dir)
+    paths.manual_file.write_text(json.dumps(doc, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    return {"ok": True, "count": len(doc.get("cues") or [])}
+
+
+def generations(paths: SetPaths) -> dict:
+    """いまの版と、残っている版の一覧。画面に出す。"""
+    cur = read_origin(paths.project_file)
+    out = []
+    for g in GENERATIONS:
+        f = paths.generation_file(g["kind"])
+        info = read_origin(f) if f.exists() else {}
+        out.append({**g, "exists": f.exists(), "file": f.name, **info})
+    return {"current": cur, "generations": out}
+
+
+def import_segments(paths: SetPaths, segments: list[dict],
+                    origin: str = ORIGIN_TRANSCRIBE,
+                    keep_as: str | None = "auto") -> dict:
     """文字起こしの結果で edit.json を丸ごと差し替える。
 
     元の .srt には触らない。いまの edit.json は _rotate_backups で
     backup/ に退避されるので、流し直して気に入らなければ戻せる。
     ⌘Z では戻らない（ブラウザ側の履歴ではなくファイルの入れ替えなので）。
+
+    keep_as を渡すと、書いた直後の姿をその版としても残す。文字起こしの生出力は
+    ここでしか手に入らない（4 秒ごとの自動保存が始まると 20 秒ほどで上書きされ、
+    backup/ の 5 世代からも押し出される）。
     """
     cues: list[Cue] = []
     for s in segments:
@@ -442,13 +582,20 @@ def import_segments(paths: SetPaths, segments: list[dict]) -> dict:
             end=float(s.get("end") or 0.0),
             speaker=str(s.get("speaker") or UNKNOWN).strip() or UNKNOWN,
             text=text,
+            # 目印は落とさない。合成（traccia/merge.py）が「機械では決めきれ
+            # なかった」箇所に付けてくるので、そのまま行頭に出して絞り込める
+            # ようにする。付いていなければ従来どおり何も書かれない。
+            mark=bool(s.get("mark")),
         ))
     _renumber(cues)
 
     order = speakers_of(cues)
     res = save(paths, {"speakers": order,
-                       "cues": [c.to_dict() for c in cues]})
-    return {**res, "speakers": order}
+                       "cues": [c.to_dict() for c in cues],
+                       "origin": origin, "originAt": time.time()})
+    if keep_as:
+        snapshot(paths, keep_as)
+    return {**res, "speakers": order, "origin": origin}
 
 
 def export(paths: SetPaths, payload: dict) -> dict:

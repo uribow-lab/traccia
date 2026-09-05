@@ -32,7 +32,9 @@ if "%HF_TOKEN%"=="" (
 
 set /p SPEAKERS=話者は何人ですか（分かれば数字、不明なら空のまま Enter）:
 
-set OPT=--diarize --split-speakers --device cuda --compute-type int8
+rem 計算精度は指定しない。--compute-type の既定 auto が、GPU なら float32、
+rem CPU なら int8 を選ぶ。GPU の int8 は出力が壊れることがある（TRAC-27）。
+set OPT=--diarize --split-speakers --device cuda
 if not "%SPEAKERS%"=="" set OPT=%OPT% --speakers %SPEAKERS%
 
 echo.

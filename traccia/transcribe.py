@@ -350,6 +350,81 @@ def load_vocab(input_path: Path, terms_arg, note_arg, skip: bool) -> tuple[list[
     return terms, note
 
 
+# 同じ本文がこの回数を超えて続いたら、暴走を疑う。
+# 相槌の連発（「うん」が数回）と区別できる程度には大きく取る。
+REPEAT_LIMIT = 5
+
+# ただし回数だけでは足りない。「うん」が 7 回続いても、それが出力の 1% なら
+# 暴走ではない（実際に 7 回・1% で「暴走しています」と出て、警告が信用を失った）。
+# 本当に暴走したときは出力の大半を占める（実測では 501 回・出力の 71%）。
+REPEAT_SHARE = 0.05
+
+
+def default_compute_type(device: str) -> str:
+    """その環境で安全に使える計算精度を返す。
+
+    GPU の int8 は、モデルが大きいと同じ本文を延々と繰り返す状態に落ちる。
+    29 分の素材で出力の 71% が「1」の羅列になった実測がある（TRAC-27）。
+    CPU の int8 は medium でも正常なので、そのまま使う。
+
+        CPU  … int8    速くて壊れない
+        GPU  … float32 int8 は壊れる。float16 は Pascal 世代では動かない
+    """
+    return "float32" if device == "cuda" else "int8"
+
+
+def detect_repetition(lines: list["Line"], limit: int = REPEAT_LIMIT) -> tuple[int, int, int]:
+    """同じ本文が続いた最長の並びを返す。(回数, 開始の添字, 終了の添字)。
+
+    モデルが暴走しても .srt は正常に書き出されるので、開くまで気づけない。
+    書き出しの前にここで数えて、気づけるようにする。
+    """
+    best = (0, 0, 0)
+    i = 0
+    while i < len(lines):
+        j = i
+        while j + 1 < len(lines) and lines[j + 1].text == lines[i].text:
+            j += 1
+        if j - i + 1 > best[0]:
+            best = (j - i + 1, i, j)
+        i = j + 1
+    return best
+
+
+def repetition_share(lines: list["Line"]) -> tuple[int, float, int, int]:
+    """最長の繰り返しの回数と、それが出力に占める割合。"""
+    n, a, b = detect_repetition(lines)
+    if not lines or n <= 1:
+        return n, 0.0, a, b
+    span = lines[b].end - lines[a].start
+    total = lines[-1].end - lines[0].start
+    return n, (span / total if total > 0 else 0.0), a, b
+
+
+def warn_if_repeating(lines: list["Line"], device: str, compute_type: str) -> None:
+    """暴走していれば警告を出す。処理は止めない（途中までは使えることがある）。
+
+    回数と割合の両方を見る。回数だけだと相槌の連発を暴走と呼んでしまい、
+    警告そのものが信用されなくなる。
+    """
+    n, share, a, b = repetition_share(lines)
+    if n <= REPEAT_LIMIT or share < REPEAT_SHARE:
+        return
+    text = lines[a].text[:24] or "（空）"
+    print("", file=sys.stderr)
+    print(f"警告: 同じ本文が {n} 回続いています"
+          f"（{format_timestamp(lines[a].start)[:8]}〜{format_timestamp(lines[b].end)[:8]}"
+          f"「{text}」）", file=sys.stderr)
+    print(f"      出力の {share * 100:.0f}% がこの繰り返しです。文字起こしが暴走しています。",
+          file=sys.stderr)
+    if device == "cuda" and compute_type.startswith("int8"):
+        print("      --compute-type float32 で試してください"
+              "（GPU の int8 で起きやすい）", file=sys.stderr)
+    else:
+        print("      --compute-type や --model を変えて試してください", file=sys.stderr)
+    print("", file=sys.stderr)
+
+
 def build_hints(terms: list[str], note: str) -> tuple[str | None, str | None]:
     """faster-whisper に渡す 2 つの手がかりを作る。
 
@@ -385,8 +460,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--compute-type",
-        default="int8",
-        help="ctranslate2 の計算精度 int8/int8_float16/float16/float32 (既定: int8)",
+        default="auto",
+        help="ctranslate2 の計算精度 int8/int8_float32/float16/float32。"
+             "既定の auto は CPU なら int8、GPU なら float32 を選ぶ。"
+             "GPU の int8 は出力が壊れることがあるので既定にしない",
     )
     parser.add_argument(
         "--language",
@@ -513,8 +590,15 @@ def main() -> int:
         except Exception:
             device = "cpu"
 
-    print(f"モデル '{args.model}' を読み込み中... (device={device}, compute_type={args.compute_type})")
-    model = WhisperModel(args.model, device=device, compute_type=args.compute_type)
+    compute_type = args.compute_type
+    if compute_type == "auto":
+        compute_type = default_compute_type(device)
+
+    print(f"モデル '{args.model}' を読み込み中... (device={device}, compute_type={compute_type})")
+    if device == "cuda" and compute_type == "int8":
+        print("警告: GPU の int8 は出力が壊れることがあります"
+              "（同じ本文を延々と繰り返す）。float32 を勧めます", file=sys.stderr)
+    model = WhisperModel(args.model, device=device, compute_type=compute_type)
 
     terms, note = load_vocab(input_path, args.terms, args.note, args.no_vocab)
     hotwords, initial_prompt = build_hints(terms, note)
@@ -544,6 +628,9 @@ def main() -> int:
         text = drop_periods(seg.text)
         lines.append(Line(start=seg.start, end=seg.end, text=text))
         print(f"  [{format_timestamp(seg.start)}] {text}")
+
+    # 話者分離や波形より先に見る。暴走していれば、そのあとの処理は無駄になる
+    warn_if_repeating(lines, device, compute_type)
 
     if args.diarize:
         turns = run_diarization(str(input_path), args.hf_token, args.speakers, args.device,

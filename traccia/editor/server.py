@@ -17,10 +17,10 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import config, gemini, usage
-from . import jobs, project, waveform, worklog
+from .. import __version__, config, gemini, usage
+from . import compare_api, jobs, project, style_api, waveform, worklog, wfp_import
 from .jobs import JobError
 from .project import ProjectError, SetPaths
 
@@ -79,6 +79,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
         # 静的ファイルもキャッシュさせない。直したのにリロードで反映されない、を防ぐ。
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_page(self, path: Path) -> None:
+        """HTML は配る前に {{VERSION}} を埋める。
+
+        版を出すためだけに JS から 1 往復増やすのが惜しいので、ここで差し込む。
+        """
+        if not path.is_file():
+            self._send_error_json(404, f"not found: {path.name}")
+            return
+        data = path.read_text(encoding="utf-8").replace("{{VERSION}}", __version__).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
@@ -157,7 +173,10 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         try:
             if path == "/" or path == "/index.html":
-                self._send_file(STATIC_DIR / "index.html")
+                self._send_page(STATIC_DIR / "index.html")
+                return
+            if path == "/compare":
+                self._send_page(STATIC_DIR / "compare.html")
                 return
             if path.startswith("/static/"):
                 rel = path[len("/static/"):]
@@ -202,12 +221,74 @@ class Handler(BaseHTTPRequestHandler):
                                  **project.load_vocab(paths)})
                 return
 
-            # 文字起こしの想定費用と、このセットで最後に動かした job
+            # 残っている版（文字起こしの生出力 / 手作業の確定版 / wfp の最終版）
+            m = re.fullmatch(r"/api/sets/([^/]+)/generations", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                self._send_json(project.generations(paths))
+                return
+
+            # 2 つの版を突き合わせる。left / right は auto / manual / wfp / current
+            m = re.fullmatch(r"/api/sets/([^/]+)/compare", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                q = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                try:
+                    self._send_json(compare_api.run(
+                        paths,
+                        (q.get("left") or ["current"])[0],
+                        (q.get("right") or ["manual"])[0]))
+                except compare_api.CompareError as e:
+                    self._send_error_json(400, str(e))
+                return
+
+            # このセットの作法と、そこから作った提案
+            m = re.fullmatch(r"/api/sets/([^/]+)/style", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                self._send_json(style_api.overview(paths, self.ctx.resources))
+                return
+
+            # セットの中にある .wfp（更新日時の新しい順）
+            m = re.fullmatch(r"/api/sets/([^/]+)/wfp", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                self._send_json({"files": wfp_import.find_wfps(paths)})
+                return
+
+            # 取り込む前に見せる中身。ここでは何も書かない
+            m = re.fullmatch(r"/api/sets/([^/]+)/wfp/preview", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                q = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                name = (q.get("file") or [""])[0]
+                if not name:
+                    self._send_error_json(400, "どの .wfp か指定されていません")
+                    return
+                try:
+                    self._send_json(wfp_import.preview(paths, name))
+                except wfp_import.ImportError_ as e:
+                    self._send_error_json(400, str(e))
+                return
+
+            # 文字起こしの想定費用と、このセットで最後に動かした job。
+            # 使うものは query で選べる（gemini=0 / local=small,medium）
             m = re.fullmatch(r"/api/sets/([^/]+)/transcribe", path)
             if m:
                 paths = self.ctx.get(m.group(1))
                 job = jobs.RUNNER.latest_for(paths.name)
+                # keep_blank_values … local= を「ローカルは使わない」と読むため。
+                # 既定では空の値が落ちて、選択肢すべてに戻ってしまう。
+                q = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                opts = {}
+                if "gemini" in q:
+                    opts["gemini"] = q["gemini"][0] not in ("0", "false", "")
+                if "local" in q:
+                    opts["localModels"] = [x for x in q["local"][0].split(",") if x]
+                else:
+                    opts["localModels"] = [c["id"] for c in jobs.local_asr.MODEL_CHOICES]
                 self._send_json({"estimate": jobs.estimate_for(paths),
+                                 "plan": jobs.plan(paths, opts),
                                  "job": job.to_dict() if job else None,
                                  "busy": bool(jobs.RUNNER.current())})
                 return
@@ -319,6 +400,48 @@ class Handler(BaseHTTPRequestHandler):
                 paths = self.ctx.get(m.group(1))
                 job = jobs.start_transcribe(paths, self._read_body(), self.ctx.lock)
                 self._send_json(job.to_dict())
+                return
+
+            # wfp を取り込む。手作業版は直前に退避される（TRAC-21）
+            m = re.fullmatch(r"/api/sets/([^/]+)/wfp/import", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                body = self._read_body()
+                name = str(body.get("file") or "")
+                mapping = body.get("mapping") or {}
+                if not name:
+                    self._send_error_json(400, "どの .wfp か指定されていません")
+                    return
+                try:
+                    with self.ctx.lock:
+                        res = wfp_import.run_import(paths, name, mapping)
+                except wfp_import.ImportError_ as e:
+                    self._send_error_json(400, str(e))
+                    return
+                self._send_json({**res, **project.generations(paths)})
+                return
+
+            # 提案を反映する / 取り消す
+            m = re.fullmatch(r"/api/sets/([^/]+)/style/(apply|undo)", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                body = self._read_body() if m.group(2) == "apply" else {}
+                with self.ctx.lock:
+                    res = style_api.act(paths, self.ctx.resources,
+                                        m.group(2), body)
+                self._send_json(res)
+                return
+
+            # いまの状態を手作業の確定版として置き直す。やり直しのための出口
+            m = re.fullmatch(r"/api/sets/([^/]+)/generations/manual", path)
+            if m:
+                paths = self.ctx.get(m.group(1))
+                if not paths.project_file.exists():
+                    self._send_error_json(400, "編集データがありません")
+                    return
+                with self.ctx.lock:
+                    res = project.mark_manual(paths)
+                self._send_json({**res, **project.generations(paths)})
                 return
 
             m = re.fullmatch(r"/api/jobs/([^/]+)/cancel", path)

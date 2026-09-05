@@ -65,6 +65,9 @@ traccia/
 
 ## 文字起こしの処理の流れ
 
+ここに書くのは **`transcribe` コマンド**（ローカル単体）の流れ。エディタの「文字起こし」から
+Gemini とローカル 2 つを回して合成する流れは別で、[Gemini で書き起こす](gemini.md#走る順番)にある。
+
 ```mermaid
 flowchart TD
     IN["sample.mov"] --> CHK{"引数と入力の確認"}

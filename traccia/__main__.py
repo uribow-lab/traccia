@@ -4,6 +4,7 @@
     python -m traccia edit [...]
     python -m traccia transcribe [...]
     python -m traccia wfp [...]
+    python -m traccia diag [...]
 
 transcribe 側の引数は traccia/transcribe.py のパーサがそのまま受け取る。
 既存のコマンド（--diarize --speakers 4 --split-speakers など）を変えないため、
@@ -27,6 +28,10 @@ USAGE = """Traccia — 話者別字幕ツール
       Filmora で直し終えたプロジェクトから最終版の .srt を取り出す
       既定の出力先: <.wfp と同じ場所>/export/<名前>_wfp.srt
 
+  python -m traccia diag セットフォルダ [--chunk 240] [--no-run] [--yes]
+      文字起こしの時刻のずれを測る（生の時刻を残して確定版と突き合わせる）
+      edit.json には書かない。--no-run なら課金なしで測り直すだけ
+
   ダブルクリックで開くなら Mac は Traccia.command、Windows は Traccia.bat
 """
 
@@ -48,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "wfp":
         from .wfp import main as wfp_main
         return wfp_main(argv[1:])
+
+    if cmd == "diag":
+        from .diag_cli import main as diag_main
+        return diag_main(argv[1:])
 
     if cmd == "edit":
         argv = argv[1:]
