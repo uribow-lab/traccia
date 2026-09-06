@@ -42,6 +42,12 @@ TIME_PRIORITY = ("small", "medium")
 # これ以上食い違っていたら「要確認」の印を付ける
 DISAGREE_SEC = 2.0
 
+# 土台の並びを崩す時刻は採らない。ローカルの対応付けが 1 行ずれると、その行が
+# 前の行より前へ飛んで順序が入れ替わる（福よし後半の実測で 289 行中 5 件。
+# 「じゃあ次回これを」の前に「頼むかって言ったら」が並ぶ、など）。
+# 土台（Gemini）の並びは信用してよいので、崩す時刻は使わずに次の候補へ回す。
+ORDER_SLACK = 0.0
+
 
 @dataclass
 class Source:
@@ -60,6 +66,7 @@ class Report:
     disagree: int = 0               # 時刻が大きく食い違った行
     localOnly: int = 0              # ローカルだけが拾った行
     trimmed: int = 0                # 同じ話者の重なりを詰めた（ずらした）行
+    reordered: int = 0              # 並びが崩れるので時刻の差し替えを見送った行
     dropped: int = 0                # 二重に拾っていたので落とした行
     joined: int = 0                 # 短い言葉どうしを 1 行にまとめた
     toUnknown: int = 0              # 居場所が無いので「不明」へ移した行
@@ -77,11 +84,17 @@ class Report:
         }
 
 
-def merge(sources: list[Source]) -> tuple[list[dict], Report]:
+def merge(sources: list[Source], *,
+          pick_up: bool = False) -> tuple[list[dict], Report]:
     """本文の系統を土台に、時刻の系統を重ねる。
 
     戻り値の区間は project.import_segments にそのまま渡せる形
     （start / end / speaker / text、必要なら mark）。
+
+    pick_up は「土台が拾えなかった発話を、時刻の系統の本文で足す」かどうか
+    （_pick_up_missed）。足すと Gemini が本当に落とした発話を拾えるが、言い直しや
+    声が重なった所の聞き間違いも一緒に入る。福よし 21 分の実測では 99 行足して、
+    人の確定版に残ったのは 10 行だけだった。既定では足さない。
     """
     text_src = next((s for s in sources if s.kind == "text" and s.segments), None)
     time_srcs = [s for s in sources if s.kind == "time" and s.segments]
@@ -112,6 +125,7 @@ def merge(sources: list[Source]) -> tuple[list[dict], Report]:
 
     rep = Report()
     out: list[dict] = []
+    floor: float | None = None             # ここまでに置いた行の開始
     for i, b in enumerate(base.segments):
         start, end = float(b["start"]), float(b["end"])
         origin = base.name
@@ -129,13 +143,18 @@ def merge(sources: list[Source]) -> tuple[list[dict], Report]:
             if hit:
                 times.append((src.name, float(hit["start"])))
 
-        if times:
-            name, _ = times[0]
+        # 時刻を差し替えるのは、土台の並びを崩さないときだけ。前の行より前へ
+        # 飛ぶ候補は飛ばして次を見る。どれも崩すなら土台の時刻のまま残す。
+        for name, at in times:
+            if floor is not None and at < floor - ORDER_SLACK:
+                rep.reordered += 1
+                continue
             hit = pairs[name][i]
             length = end - start                  # 尺は土台の側を保つ
             start = float(hit["start"])
             end = start + length if length > 0 else float(hit["end"])
             origin = name
+            break
 
         # 目印は付けない。目印は利用者が明示的に付けるもので、機械が付けるもの
         # ではない。実測では 470 件中 151 件（32%）に付いてしまい、目印の意味
@@ -154,10 +173,11 @@ def merge(sources: list[Source]) -> tuple[list[dict], Report]:
         cue = {"start": round(start, 3), "end": round(max(end, start + 0.2), 3),
                "speaker": speaker, "text": text}
         rep.timeFrom[origin] = rep.timeFrom.get(origin, 0) + 1
+        floor = cue["start"]
         out.append(cue)
 
     # 本文の系統が拾えず、時刻の系統だけが拾った発話を足す
-    if text_src:
+    if text_src and pick_up:
         out.extend(_pick_up_missed(base, others, out, rep))
 
     out.sort(key=lambda c: (c["start"], c["end"]))
@@ -421,6 +441,8 @@ def summary_text(rep: Report) -> str:
         parts.append(f"時刻の出どころ {who}")
     if rep.shortened:
         parts.append(f"長すぎた尺を切ったもの {rep.shortened} 件")
+    if rep.reordered:
+        parts.append(f"並びを崩すので時刻を採らなかったもの {rep.reordered} 件")
     fixed = rep.trimmed + rep.dropped + rep.joined + rep.toUnknown
     if fixed:
         detail = []

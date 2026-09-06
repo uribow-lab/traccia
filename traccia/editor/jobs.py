@@ -251,6 +251,10 @@ def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Jo
         raise JobError("動画の長さを読み取れませんでした（PyAV が必要です）")
 
     use_gemini = bool(options.get("gemini", True))
+    # ローカルだけが拾った発話も足すか。既定では足さない（traccia/merge.py の
+    # merge() を見よ）。拾える発話より、言い直しや被った声の聞き間違いのほうが
+    # 多く混ざるので、必要なときだけ実行前の画面で入れてもらう。
+    pick_up = bool(options.get("pickUp", False))
     models = [m for m in (options.get("localModels") or [])
               if m in {c["id"] for c in local_asr.MODEL_CHOICES}]
     if not use_gemini and not models:
@@ -419,7 +423,7 @@ def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Jo
             if r:
                 sources.append(merge_mod.Source(m, "time", r.segments))
 
-        cues, rep = merge_mod.merge(sources)
+        cues, rep = merge_mod.merge(sources, pick_up=pick_up)
         job.merged = rep.to_dict()
         job.notes.append(f"区切りの目安 {sty.sec:.1f} 秒・{sty.chars} 文字を使いました"
                          f"（{sty.from_ or '既定値'}）")
@@ -443,5 +447,5 @@ def start_transcribe(paths: SetPaths, options: dict, lock: threading.Lock) -> Jo
         job.status = "cancelled" if job.cancelled() else "done"
         job.message = f"{res['count']} 件を取り込みました（{merge_mod.summary_text(rep)}）"
 
-    est = {**est, "useGemini": use_gemini, "localModels": models}
+    est = {**est, "useGemini": use_gemini, "localModels": models, "pickUp": pick_up}
     return RUNNER.start(paths.name, "transcribe", est, work)

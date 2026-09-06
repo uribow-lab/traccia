@@ -16,5 +16,5 @@ Mac は `Traccia.command`、Windows は `Traccia.bat` をダブルクリック�
 edit のときは読み込まないよう、import はサブコマンドの中で行っている。
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 NAME = "Traccia"

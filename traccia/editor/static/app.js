@@ -2655,6 +2655,7 @@ function trPicked() {
     gemini: el.trUseGemini.checked,
     local: Array.from(document.querySelectorAll(".trLocal"))
       .filter(c => c.checked).map(c => c.value),
+    pickUp: el.trPickUp.checked,
   };
 }
 
@@ -2703,6 +2704,10 @@ function renderEstimate(est, plan, busy) {
     if (box) box.textContent = `無料 / ${fmtMin(est.duration * c.secPerSec)}`;
   }
   const localOk = use.localAvailable !== false;
+  // ローカルが 1 つも無ければ「不明として足す」は効きようがない
+  const canPick = localOk && p.local.length > 0;
+  el.trPickUp.disabled = !canPick;
+  el.trPickUpHint.hidden = canPick || !localOk;
   el.trLocalHint.hidden = localOk;
   document.querySelectorAll(".trLocal").forEach(c => {
     c.disabled = !localOk;
@@ -2742,7 +2747,8 @@ async function startTranscribe() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ speakers: n > 0 ? n : 0,
                              gemini: trPicked().gemini,
-                             localModels: trPicked().local }),
+                             localModels: trPicked().local,
+                             pickUp: trPicked().pickUp }),
     });
     trJobId = job.id;
     trShowRun();
@@ -3157,6 +3163,7 @@ function initRefs() {
     "trTitle","trConfirm","trRun","trSet","trDur","trChunks","trModel","trCost","trMonth",
     "trReady","trSpeakers","trBarFill","trMsg","trElapsed","trSpent","trFoot",
     "trUseGemini","trPickGeminiCost","trPickSmall","trPickMedium","trLocalHint",
+    "trPickUp","trPickUpHint",
     "trTime","trEngines","trNotes","genList","btnMarkManual",
     "btnWfp","wfpOverlay","btnWfpClose","btnWfpCancel","btnWfpGo","wfpFile",
     "wfpFileHint","wfpPreview","wfpName","wfpCount","wfpNow","wfpKeep","wfpWarn",

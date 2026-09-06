@@ -493,6 +493,27 @@
           <input type="number" id="trSpeakers" class="inp" min="0" max="12" step="1" placeholder="未指定">
           <span class="hint">話者設定に名前があるときは、その名前を使わせます（人数指定より優先）。</span>
         </label>
+
+        <h3 class="sheet-sec">ローカルだけが拾った発話</h3>
+        <p class="sheet-lede">
+          ローカルは<b>時刻を貼り直すため</b>に使い、本文と話者は Gemini が決めます。
+          ただし<b>ローカルが喋りを見つけた所に Gemini の行が無い</b>ことがあります。
+          そこを「Gemini が落とした発話」とみなして、ローカルの本文で
+          <b>話者「不明」の行として足す</b>のがこの設定です。<br>
+          落とした発話を拾える代わりに、<b>言い直し・口ごもり・声が重なった所の
+          聞き間違い</b>も一緒に入ります。Gemini はそういう箇所をまとめて 1 行にするので、
+          ローカルとは本文が違ってしまい、機械では同じ発話だと見分けられません。
+          <b>実測（21 分の素材）では 99 行足して、直し終えた字幕に残ったのは 10 行でした。</b>
+          残りは手で消すことになります。<br>
+          ふだんは入れずに、<b>拾い漏れのほうが気になる素材のときだけ</b>入れてください。
+        </p>
+        <label class="toggle">
+          <input type="checkbox" id="trPickUp">
+          <span class="toggle-txt">ローカルだけが拾った発話も「不明」として足す</span>
+        </label>
+        <p class="hint" id="trPickUpHint" hidden>
+          ローカルを 1 つも選んでいないので、この設定は効きません。
+        </p>
       </div>
 
       <!-- 実行中・結果 -->
